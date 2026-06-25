@@ -33,7 +33,7 @@ bun test
 
 git add package.json src/version.ts
 git commit -m "release: v$VERSION"
-git tag -a "v$VERSION" -m "ergo v$VERSION"
+git tag -s "v$VERSION" -m "ergo v$VERSION"
 
 echo "✓ Committed and tagged v$VERSION"
 echo "  Push with: git push origin main --follow-tags"
