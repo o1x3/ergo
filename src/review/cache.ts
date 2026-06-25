@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
-import type { DiffSet } from '@/git/diff';
+import type { DiffSet, ReviewTarget } from '@/git/diff';
 import type { ReviewResult } from '@/review/schema';
 import { ergoHome } from '@/util/paths';
 
@@ -23,6 +23,9 @@ export interface CachedReview {
       deletions: number;
       language: string;
     }[];
+    // sha256 of each file's content at review time, so `ergo fix` can detect a
+    // file that changed since the review and refuse to apply a stale patch.
+    fileHashes: Record<string, string>;
   };
   review: ReviewResult;
 }
@@ -35,6 +38,21 @@ function cachePath(
   return join(ergoHome(env), 'reviews', `${key}.json`);
 }
 
+export function hashContent(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+export async function hashFile(
+  root: string,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    return hashContent(await readFile(join(root, path), 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function saveReviewCache(
   repoRoot: string,
   diff: DiffSet,
@@ -42,6 +60,13 @@ export async function saveReviewCache(
 ): Promise<void> {
   const path = cachePath(repoRoot);
   await mkdir(dirname(path), { recursive: true });
+  const fileHashes: Record<string, string> = {};
+  await Promise.all(
+    diff.files.map(async (f) => {
+      const h = await hashFile(repoRoot, f.path);
+      if (h) fileHashes[f.path] = h;
+    }),
+  );
   const payload: CachedReview = {
     version: 1,
     savedAt: new Date().toISOString(),
@@ -57,6 +82,7 @@ export async function saveReviewCache(
         deletions: f.deletions,
         language: f.language,
       })),
+      fileHashes,
     },
     review,
   };
@@ -70,11 +96,32 @@ export async function loadReviewCache(
     const parsed = JSON.parse(
       await readFile(cachePath(repoRoot), 'utf8'),
     ) as CachedReview;
-    if (parsed.version === 1 && parsed.review) return parsed;
+    if (parsed.version === 1 && parsed.review) {
+      parsed.context.fileHashes ??= {};
+      return parsed;
+    }
   } catch {
     // no cache
   }
   return undefined;
+}
+
+// Reconstruct the ReviewTarget recorded at save time (the cache stores only its
+// kind string + base/head), so replayed output reports the right scope.
+function targetFromCache(cached: CachedReview): ReviewTarget {
+  const { target, base, head } = cached.context;
+  switch (target) {
+    case 'staged':
+      return { kind: 'staged' };
+    case 'branch':
+      return { kind: 'branch', base: base ?? 'auto' };
+    case 'commit':
+      return { kind: 'commit', ref: head ?? 'HEAD' };
+    case 'range':
+      return { kind: 'range', range: head ?? 'HEAD' };
+    default:
+      return { kind: 'working' };
+  }
 }
 
 // Rebuild a minimal DiffSet for re-rendering JSON output from a cached review.
@@ -89,7 +136,7 @@ export function diffSetFromCache(cached: CachedReview): DiffSet {
       deletions: f.deletions,
       language: f.language,
     })),
-    target: { kind: 'working' },
+    target: targetFromCache(cached),
     base: cached.context.base,
     head: cached.context.head,
     totalAdditions: cached.context.files.reduce((n, f) => n + f.additions, 0),

@@ -74,16 +74,46 @@ export const chatCommand = defineCommand({
     );
     log.info('');
 
+    const MAX_HISTORY = 24; // ~12 turns; the full diff is always in `system`
     const rl = createInterface({
       input: process.stdin,
       output: process.stdout,
     });
+
+    // Resolve a pending prompt with null on EOF (Ctrl+D / piped stdin) so the
+    // loop exits cleanly instead of hanging on a promise that never settles.
+    let pending: ((v: string | null) => void) | null = null;
+    rl.on('close', () => {
+      if (pending) {
+        pending(null);
+        pending = null;
+      }
+    });
     const ask = () =>
-      new Promise<string>((resolve) => rl.question(pc.cyan('› '), resolve));
+      new Promise<string | null>((resolve) => {
+        pending = resolve;
+        rl.question(pc.cyan('› '), (a) => {
+          pending = null;
+          resolve(a);
+        });
+      });
+
+    // Ctrl+C cancels an in-flight response; pressing it at an idle prompt exits.
+    let currentAbort: AbortController | null = null;
+    rl.on('SIGINT', () => {
+      if (currentAbort) {
+        currentAbort.abort();
+        currentAbort = null;
+      } else {
+        rl.close();
+      }
+    });
 
     try {
       while (true) {
-        const input = (await ask()).trim();
+        const raw = await ask();
+        if (raw === null) break; // EOF
+        const input = raw.trim();
         if (!input) continue;
         if (input === '/exit' || input === '/quit' || input === '/q') break;
         if (input === '/clear') {
@@ -99,14 +129,17 @@ export const chatCommand = defineCommand({
         }
 
         history.push({ role: 'user', content: input });
-        process.stdout.write(pc.dim('\n'));
+        process.stdout.write('\n');
         let answer = '';
+        const controller = new AbortController();
+        currentAbort = controller;
         try {
           const result = await resolved.client.complete({
             model: resolved.model,
             system,
             messages: history,
             temperature: 0.3,
+            signal: controller.signal,
             onTextDelta: (d) => {
               answer += d;
               process.stdout.write(d);
@@ -115,11 +148,19 @@ export const chatCommand = defineCommand({
           if (!answer) process.stdout.write(result.text);
           answer = answer || result.text;
         } catch (err) {
-          log.error(err instanceof Error ? err.message : String(err));
+          const msg = err instanceof Error ? err.message : String(err);
+          if (controller.signal.aborted) log.dim('\n(cancelled)');
+          else log.error(msg);
           history.pop();
           continue;
+        } finally {
+          currentAbort = null;
         }
         history.push({ role: 'assistant', content: answer });
+        // Trim oldest turns so a long session doesn't grow unbounded.
+        if (history.length > MAX_HISTORY) {
+          history.splice(0, history.length - MAX_HISTORY);
+        }
         process.stdout.write('\n\n');
       }
     } finally {

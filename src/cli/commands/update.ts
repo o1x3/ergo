@@ -24,6 +24,27 @@ function normalize(v: string): string {
   return v.replace(/^v/, '');
 }
 
+// Compare two semver strings. Returns >0 if a>b, <0 if a<b, 0 if equal. A
+// prerelease (e.g. 1.0.0-rc1) sorts before its release. Good enough for the
+// release feed; unparseable parts compare as 0.
+export function compareSemver(a: string, b: string): number {
+  const parse = (v: string) => {
+    const [core = '', pre] = normalize(v).split('-', 2);
+    const nums = core.split('.').map((n) => Number.parseInt(n, 10) || 0);
+    return { nums, pre };
+  };
+  const pa = parse(a);
+  const pb = parse(b);
+  for (let i = 0; i < 3; i++) {
+    const d = (pa.nums[i] ?? 0) - (pb.nums[i] ?? 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  if (pa.pre && !pb.pre) return -1; // a is prerelease, b is release → a<b
+  if (!pa.pre && pb.pre) return 1;
+  if (pa.pre && pb.pre) return pa.pre.localeCompare(pb.pre);
+  return 0;
+}
+
 export const updateCommand = defineCommand({
   meta: {
     name: 'update',
@@ -43,8 +64,13 @@ export const updateCommand = defineCommand({
     const current = `v${normalize(VERSION)}`;
     const newest = `v${normalize(latest)}`;
 
-    if (normalize(latest) === normalize(VERSION)) {
-      log.success(`ergo is up to date (${current}).`);
+    const cmp = compareSemver(latest, VERSION);
+    if (cmp <= 0) {
+      log.success(
+        cmp === 0
+          ? `ergo is up to date (${current}).`
+          : `ergo (${current}) is newer than the latest release (${newest}).`,
+      );
       return;
     }
     log.info(

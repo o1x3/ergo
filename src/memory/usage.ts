@@ -87,11 +87,13 @@ export function summarizeUsage(records: UsageRecord[]): UsageSummary {
     byModel: {},
     subscriptionReviews: 0,
   };
+  const fin = (v: unknown): number =>
+    typeof v === 'number' && Number.isFinite(v) ? v : 0;
   for (const r of records) {
-    summary.tokensInput += r.tokensInput;
-    summary.tokensOutput += r.tokensOutput;
-    summary.costUsd += r.costUsd;
-    summary.findings += r.findings;
+    summary.tokensInput += fin(r.tokensInput);
+    summary.tokensOutput += fin(r.tokensOutput);
+    summary.costUsd += fin(r.costUsd);
+    summary.findings += fin(r.findings);
     if (r.subscription) summary.subscriptionReviews += 1;
     let m = summary.byModel[r.model];
     if (!m) {
@@ -99,7 +101,7 @@ export function summarizeUsage(records: UsageRecord[]): UsageSummary {
       summary.byModel[r.model] = m;
     }
     m.reviews += 1;
-    m.costUsd += r.costUsd;
+    m.costUsd += fin(r.costUsd);
   }
   return summary;
 }

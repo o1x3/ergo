@@ -1,5 +1,5 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { ergoHome } from '@/util/paths';
@@ -48,7 +48,11 @@ async function readFileSafe(path: string): Promise<LearningsFile> {
 
 async function writeFileSafe(path: string, data: LearningsFile): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  // Atomic write: a crash mid-write (or a concurrent process) can never leave a
+  // truncated/empty learnings file.
+  const tmp = `${path}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  await rename(tmp, path);
 }
 
 export async function listLearnings(
@@ -81,10 +85,9 @@ export async function addLearning(
   const path = scope === 'global' ? globalPath(env) : localPath(repoRoot, env);
   const file = await readFileSafe(path);
   const learning: Learning = {
-    id: createHash('sha256')
-      .update(`${text}${file.learnings.length}`)
-      .digest('hex')
-      .slice(0, 8),
+    // Collision-free id (the old length-based hash collided across files/edits,
+    // so `learn rm` could delete several entries at once).
+    id: randomUUID().slice(0, 8),
     text: text.trim(),
     createdAt: new Date().toISOString(),
     source: opts.source ?? 'manual',
@@ -111,14 +114,29 @@ export async function removeLearning(
   return false;
 }
 
-// Render the most relevant learnings as a prompt block (capped).
+// Render the most relevant learnings as a prompt block (capped). Under `auto`,
+// reserve a quota per scope so a large global list can't starve repo-local
+// learnings (which are usually the most relevant).
 export async function loadLearningsForPrompt(
   repoRoot: string,
   scope: LearningScope = 'auto',
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
-  const all = await listLearnings(repoRoot, scope, env);
-  if (all.length === 0) return undefined;
-  const recent = all.slice(-MAX_PROMPT_LEARNINGS);
-  return recent.map((l) => `- ${l.text}`).join('\n');
+  let selected: Learning[];
+  if (scope === 'auto') {
+    const local = await listLearnings(repoRoot, 'local', env);
+    const global = await listLearnings(repoRoot, 'global', env);
+    const half = Math.floor(MAX_PROMPT_LEARNINGS / 2);
+    const localPick = local.slice(
+      -Math.max(half, MAX_PROMPT_LEARNINGS - global.length),
+    );
+    const globalPick = global.slice(-(MAX_PROMPT_LEARNINGS - localPick.length));
+    selected = [...localPick, ...globalPick];
+  } else {
+    selected = (await listLearnings(repoRoot, scope, env)).slice(
+      -MAX_PROMPT_LEARNINGS,
+    );
+  }
+  if (selected.length === 0) return undefined;
+  return selected.map((l) => `- ${l.text}`).join('\n');
 }

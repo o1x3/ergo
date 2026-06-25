@@ -38,16 +38,23 @@ export const describeCommand = defineCommand({
     }
     const root = await repoRoot(cwd);
 
-    const target: ReviewTarget = args.base
+    const explicitBase = Boolean(args.base);
+    const target: ReviewTarget = explicitBase
       ? { kind: 'branch', base: args.base as string }
       : { kind: 'branch', base: 'auto' };
     let diff = await collectDiff(target, { cwd: root });
-    if (diff.files.length === 0) {
-      // Fall back to working-tree changes if the branch has no commits yet.
+    if (diff.files.length === 0 && !explicitBase) {
+      // Only fall back to working-tree changes when the base was auto-detected
+      // (the branch may have no commits yet). An explicit --base with no diff is
+      // reported as-is rather than silently describing something else.
       diff = await collectDiff({ kind: 'working' }, { cwd: root });
     }
     if (diff.files.length === 0) {
-      log.error('No changes to describe.');
+      log.error(
+        explicitBase
+          ? `No changes against ${args.base}.`
+          : 'No changes to describe.',
+      );
       process.exitCode = 1;
       return;
     }

@@ -28,7 +28,13 @@ const listCommand = defineCommand({
     scope: { type: 'string', description: 'local | global | auto (default)' },
   },
   async run({ args }) {
-    const scope = (args.scope as 'local' | 'global' | 'auto') ?? 'auto';
+    const scopeArg = (args.scope as string | undefined) ?? 'auto';
+    if (!['local', 'global', 'auto'].includes(scopeArg)) {
+      log.error(`Invalid --scope '${scopeArg}'. Use local | global | auto.`);
+      process.exitCode = 1;
+      return;
+    }
+    const scope = scopeArg as 'local' | 'global' | 'auto';
     const learnings = await listLearnings(await root(), scope);
     if (learnings.length === 0) {
       log.info('No learnings yet. Add one with `ergo learn add "<fact>"`.');

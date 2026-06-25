@@ -43,6 +43,17 @@ async function resolveRoot(dir?: string): Promise<string | undefined> {
   return repoRoot(cwd);
 }
 
+// For learnings tools: a provided-but-invalid dir is an error; an omitted dir
+// falls back to cwd (learnings are keyed by path, not strictly a git repo).
+async function resolveLearningsRoot(
+  dir?: string,
+): Promise<{ root?: string; error?: string }> {
+  const cwd = dir ? resolvePath(dir) : process.cwd();
+  if (await isGitRepo(cwd)) return { root: await repoRoot(cwd) };
+  if (dir) return { error: `Not a git repository: ${dir}` };
+  return { root: cwd };
+}
+
 // Build the MCP server with ergo's review tools. Exported for testing.
 export function buildMcpServer(): McpServer {
   const server = new McpServer({ name: 'ergo', version: VERSION });
@@ -63,9 +74,9 @@ export function buildMcpServer(): McpServer {
       },
     },
     async ({ dir, type, base, model }) => {
-      const root = await resolveRoot(dir);
-      if (!root) return err('Not a git repository.');
       try {
+        const root = await resolveRoot(dir);
+        if (!root) return err('Not a git repository.');
         const { config } = await loadConfig(root);
         const credential = await getActiveCredential();
         const resolved = resolveClient({
@@ -109,16 +120,20 @@ export function buildMcpServer(): McpServer {
       inputSchema: { dir: z.string().optional() },
     },
     async ({ dir }) => {
-      const root = await resolveRoot(dir);
-      if (!root) return err('Not a git repository.');
-      const cached = await loadReviewCache(root);
-      if (!cached) return err('No cached review. Run ergo_review first.');
-      return ok({
-        savedAt: cached.savedAt,
-        context: diffSetFromCache(cached).files.map((f) => f.path),
-        findings: cached.review.findings,
-        summary: cached.review.summary,
-      });
+      try {
+        const root = await resolveRoot(dir);
+        if (!root) return err('Not a git repository.');
+        const cached = await loadReviewCache(root);
+        if (!cached) return err('No cached review. Run ergo_review first.');
+        return ok({
+          savedAt: cached.savedAt,
+          context: diffSetFromCache(cached).files.map((f) => f.path),
+          findings: cached.review.findings,
+          summary: cached.review.summary,
+        });
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e));
+      }
     },
   );
 
@@ -133,8 +148,13 @@ export function buildMcpServer(): McpServer {
       },
     },
     async ({ dir, scope }) => {
-      const root = (await resolveRoot(dir)) ?? process.cwd();
-      return ok(await listLearnings(root, scope ?? 'auto'));
+      try {
+        const { root, error } = await resolveLearningsRoot(dir);
+        if (error || !root) return err(error ?? 'Could not resolve directory.');
+        return ok(await listLearnings(root, scope ?? 'auto'));
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e));
+      }
     },
   );
 
@@ -144,17 +164,26 @@ export function buildMcpServer(): McpServer {
       description:
         'Record a durable review preference ergo should apply later.',
       inputSchema: {
-        text: z.string().describe('The learning/preference to remember'),
+        text: z
+          .string()
+          .min(1)
+          .max(2000)
+          .describe('The learning/preference to remember'),
         dir: z.string().optional(),
         global: z.boolean().optional(),
       },
     },
     async ({ text, dir, global }) => {
-      const root = (await resolveRoot(dir)) ?? process.cwd();
-      const learning = await addLearning(root, text, {
-        scope: global ? 'global' : 'local',
-      });
-      return ok(learning);
+      try {
+        const { root, error } = await resolveLearningsRoot(dir);
+        if (error || !root) return err(error ?? 'Could not resolve directory.');
+        const learning = await addLearning(root, text, {
+          scope: global ? 'global' : 'local',
+        });
+        return ok(learning);
+      } catch (e) {
+        return err(e instanceof Error ? e.message : String(e));
+      }
     },
   );
 

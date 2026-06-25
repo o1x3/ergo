@@ -1,13 +1,15 @@
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 import { defineCommand } from 'citty';
 
-import { isGitRepo, repoRoot } from '@/git/repo';
+import { git, isGitRepo, repoRoot } from '@/git/repo';
+import { SEVERITIES, type Severity } from '@/review/schema';
 import { log, pc } from '@/util/logger';
 
 const MARKER = '# >>> ergo managed hook >>>';
 const END_MARKER = '# <<< ergo managed hook <<<';
+const HOOK_TYPES = ['pre-push', 'pre-commit'] as const;
 
 function hookBody(type: string, failOn: string): string {
   // Keep it simple and robust: pre-commit reviews staged changes; pre-push
@@ -36,14 +38,21 @@ function stripManaged(content: string): string {
   ).trim();
 }
 
-async function hookFile(root: string, type: string): Promise<string> {
-  return join(root, '.git', 'hooks', type);
+// Resolve the real hooks directory, honoring worktrees and core.hooksPath
+// (manually building <root>/.git/hooks breaks in both cases).
+async function hooksDir(root: string): Promise<string> {
+  try {
+    const out = (await git(['rev-parse', '--git-path', 'hooks'], root)).trim();
+    return isAbsolute(out) ? out : join(root, out);
+  } catch {
+    return join(root, '.git', 'hooks');
+  }
 }
 
-async function uninstall(root: string): Promise<number> {
+async function uninstall(dir: string): Promise<number> {
   let removed = 0;
-  for (const type of ['pre-push', 'pre-commit']) {
-    const path = await hookFile(root, type);
+  for (const type of HOOK_TYPES) {
+    const path = join(dir, type);
     try {
       const content = await readFile(path, 'utf8');
       if (!content.includes(MARKER)) continue;
@@ -81,21 +90,34 @@ export const hookCommand = defineCommand({
       return;
     }
     const root = await repoRoot();
+    const dir = await hooksDir(root);
 
     if (args.uninstall) {
-      const removed = await uninstall(root);
+      const removed = await uninstall(dir);
       if (removed > 0)
         log.success(`Removed ergo hook(s) from ${removed} file(s).`);
       else log.info('No ergo hooks installed.');
       return;
     }
 
-    const type =
-      (args.type as string) === 'pre-commit' ? 'pre-commit' : 'pre-push';
-    const failOn = (args['fail-on'] as string) ?? 'major';
-    const path = await hookFile(root, type);
-    await mkdir(join(root, '.git', 'hooks'), { recursive: true });
+    // Validate inputs — never interpolate unvalidated values into the shell hook.
+    const typeArg = (args.type as string | undefined) ?? 'pre-push';
+    if (!HOOK_TYPES.includes(typeArg as (typeof HOOK_TYPES)[number])) {
+      log.error(`Invalid --type '${typeArg}'. Use pre-push or pre-commit.`);
+      process.exitCode = 1;
+      return;
+    }
+    const failOn = (args['fail-on'] as string | undefined) ?? 'major';
+    if (!SEVERITIES.includes(failOn as Severity)) {
+      log.error(
+        `Invalid --fail-on '${failOn}'. Use one of: ${SEVERITIES.join(', ')}.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
 
+    const path = join(dir, typeArg);
+    await mkdir(dir, { recursive: true });
     let existing = '';
     try {
       existing = await readFile(path, 'utf8');
@@ -103,10 +125,14 @@ export const hookCommand = defineCommand({
       existing = '#!/usr/bin/env sh\n';
     }
     const cleaned = stripManaged(existing) || '#!/usr/bin/env sh';
-    await writeFile(path, `${cleaned}\n\n${hookBody(type, failOn)}\n`, 'utf8');
+    await writeFile(
+      path,
+      `${cleaned}\n\n${hookBody(typeArg, failOn)}\n`,
+      'utf8',
+    );
     await chmod(path, 0o755);
     log.success(
-      `Installed ${pc.bold(type)} hook (blocks on findings >= ${failOn}).`,
+      `Installed ${pc.bold(typeArg)} hook (blocks on findings >= ${failOn}).`,
     );
     log.dim('Bypass any run with `git commit/push --no-verify`.');
   },
