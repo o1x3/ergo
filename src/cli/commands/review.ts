@@ -13,6 +13,7 @@ import {
   type ReviewTarget,
 } from '@/git/diff';
 import { isGitRepo, repoRoot } from '@/git/repo';
+import { estimateCostUsd } from '@/inference/models';
 import { resolveClient } from '@/inference/resolve';
 import { loadLearningsForPrompt } from '@/memory/learnings';
 import { recordUsage } from '@/memory/usage';
@@ -41,6 +42,7 @@ import {
   SEVERITY_RANK,
   type Severity,
 } from '@/review/schema';
+import { serializeDiffSet } from '@/review/serialize';
 import { log, setQuiet } from '@/util/logger';
 
 function resolveTarget(args: Record<string, unknown>): ReviewTarget {
@@ -221,6 +223,11 @@ export const reviewCommand = defineCommand({
       type: 'string',
       description: `Exit non-zero if any finding >= severity (${SEVERITIES.join('|')})`,
     },
+    budget: {
+      type: 'string',
+      description:
+        'Abort if the estimated API cost would exceed this USD amount',
+    },
     quiet: {
       type: 'boolean',
       alias: 'q',
@@ -360,6 +367,39 @@ export const reviewCommand = defineCommand({
         emitOutput(format, emptyReview, finalDiff, undefined);
       }
       return;
+    }
+
+    // Budget guard (beyond-parity): abort before spending if the estimated API
+    // cost would exceed the cap. Subscriptions are covered by the plan, so skip.
+    const budget =
+      args.budget !== undefined
+        ? Number(args.budget)
+        : config.model.maxBudgetUsd;
+    if (args.budget !== undefined && (!Number.isFinite(budget) || budget < 0)) {
+      log.error(
+        `Invalid --budget '${args.budget}'. Use a non-negative number.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    if (budget > 0 && !resolved.subscription) {
+      const chars = serializeDiffSet(finalDiff, { maxChars: 5_000_000 }).text
+        .length;
+      // findings + summary passes both see the diff; add slack for prompts.
+      const estInput = Math.ceil((chars / 4) * 1.2) + 1500;
+      const estOutput = finalDiff.files.length * 350 + 800;
+      const est = estimateCostUsd(
+        resolved.model,
+        { input: estInput, output: estOutput },
+        { provider: resolved.provider },
+      );
+      if (est !== undefined && est > budget) {
+        log.error(
+          `Estimated cost ~$${est.toFixed(3)} exceeds --budget $${budget.toFixed(2)}. Use --light, narrow the diff, or raise the budget.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
     }
 
     // Build prompt context.

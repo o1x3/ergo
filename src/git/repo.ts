@@ -121,4 +121,20 @@ export async function worktreeStatus(cwd?: string): Promise<WorktreeStatus> {
   };
 }
 
+// Recent commit subjects+bodies, optionally filtered to specific authors, for
+// learning a team's review conventions from history.
+export async function recentLog(
+  opts: { limit?: number; authors?: string[]; cwd?: string } = {},
+): Promise<string> {
+  const args = [
+    'log',
+    `-n${opts.limit ?? 200}`,
+    '--no-merges',
+    '--pretty=format:- %s%n%b',
+  ];
+  for (const a of opts.authors ?? []) args.push(`--author=${a}`);
+  const { stdout } = await exec(['git', ...args], { cwd: opts.cwd });
+  return stdout.trim();
+}
+
 export { git };

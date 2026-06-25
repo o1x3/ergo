@@ -106,6 +106,7 @@ ergo review --base origin/main --format json --fail-on major
 | `ergo doctor` | Diagnose auth, git, config, and installed analysis tools |
 | `ergo config init` / `show` / `validate` | Manage `.ergo.yaml` |
 | `ergo learn add` / `list` / `rm` | Teach ergo durable review preferences |
+| `ergo learn mine` | Mine the repo's review conventions from git history + guidelines |
 | `ergo models` | List available models and pricing |
 | `ergo stats` | Local usage: reviews, tokens, and cost |
 | `ergo update` | Self-update to the latest release |
@@ -130,6 +131,7 @@ ergo review --base origin/main --format json --fail-on major
 | `--light` / `--deep` | Cheaper/faster triage model · strongest model + higher effort |
 | `--min-confidence <0-1>` | Drop findings below this confidence |
 | `--fail-on <severity>` | Exit non-zero if any finding ≥ severity (CI gating) |
+| `--budget <usd>` | Abort before running if the estimated API cost would exceed this |
 | `--no-static` | Skip static-analysis grounding |
 | `-q, --quiet` | Suppress progress output |
 

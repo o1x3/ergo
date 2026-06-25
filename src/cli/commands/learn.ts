@@ -1,7 +1,13 @@
 import { defineCommand } from 'citty';
+import { z } from 'zod';
 
-import { isGitRepo, repoRoot } from '@/git/repo';
+import { getActiveCredential } from '@/auth/resolve';
+import { loadConfig } from '@/config/load';
+import { isGitRepo, recentLog, repoRoot } from '@/git/repo';
+import { resolveClient } from '@/inference/resolve';
+import { completeStructured } from '@/inference/structured';
 import { addLearning, listLearnings, removeLearning } from '@/memory/learnings';
+import { gatherGuidelines } from '@/review/context';
 import { log, pc } from '@/util/logger';
 
 async function root(): Promise<string> {
@@ -61,6 +67,107 @@ const rmCommand = defineCommand({
   },
 });
 
+const mineSchema = z.object({
+  learnings: z
+    .array(z.string())
+    .describe(
+      'Durable, repo-specific review conventions (imperative, concise)',
+    ),
+});
+
+const mineCommand = defineCommand({
+  meta: {
+    name: 'mine',
+    description:
+      "Learn this repo's review conventions from git history + guidelines",
+  },
+  args: {
+    commits: {
+      type: 'string',
+      description: 'How many commits to mine (default 200)',
+    },
+    reviewers: {
+      type: 'string',
+      description: 'Comma-separated authors to mirror (git --author filters)',
+    },
+    global: { type: 'boolean', description: 'Store globally (all repos)' },
+    model: { type: 'string', alias: 'm', description: 'Override the model' },
+  },
+  async run({ args }) {
+    if (!(await isGitRepo())) {
+      log.error('Not a git repository.');
+      process.exitCode = 1;
+      return;
+    }
+    const repoRootDir = await repoRoot();
+    const { config } = await loadConfig(repoRootDir);
+
+    let credential: Awaited<ReturnType<typeof getActiveCredential>>;
+    try {
+      credential = await getActiveCredential();
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
+    const resolved = resolveClient({
+      credential,
+      modelOverride: args.model as string | undefined,
+    });
+
+    const authors = (args.reviewers as string | undefined)
+      ?.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const limit = args.commits ? Number(args.commits) : 200;
+    log.step('Mining commit history and guidelines…');
+    const [history, guidelines] = await Promise.all([
+      recentLog({ limit, authors, cwd: repoRootDir }),
+      gatherGuidelines(repoRootDir, config),
+    ]);
+    if (!history && !guidelines) {
+      log.error('No commit history or guidelines found to learn from.');
+      process.exitCode = 1;
+      return;
+    }
+
+    const result = await completeStructured({
+      client: resolved.client,
+      model: resolved.model,
+      schema: mineSchema,
+      jsonSchema: z.toJSONSchema(mineSchema) as Record<string, unknown>,
+      system:
+        'You extract durable, repo-specific CODE-REVIEW conventions a reviewer should consistently apply. Output concise, imperative rules (e.g. "Require parameterized SQL"). Ignore one-off changes; capture only patterns worth enforcing on every review. Max 15.',
+      messages: [
+        {
+          role: 'user',
+          content: [
+            guidelines ? `## Guidelines\n${guidelines}` : '',
+            history
+              ? `## Recent commit history\n${history.slice(0, 60_000)}`
+              : '',
+          ]
+            .filter(Boolean)
+            .join('\n\n'),
+        },
+      ],
+      temperature: 0.2,
+    });
+
+    const scope = args.global ? 'global' : 'local';
+    let saved = 0;
+    for (const text of result.value.learnings.slice(0, 15)) {
+      if (text.trim()) {
+        await addLearning(repoRootDir, text, { scope, source: 'history' });
+        saved += 1;
+      }
+    }
+    log.success(
+      `Learned ${saved} convention(s) from history. View with \`ergo learn list\`.`,
+    );
+  },
+});
+
 export const learnCommand = defineCommand({
   meta: {
     name: 'learn',
@@ -70,5 +177,6 @@ export const learnCommand = defineCommand({
     add: addCommand,
     list: listCommand,
     rm: rmCommand,
+    mine: mineCommand,
   },
 });
