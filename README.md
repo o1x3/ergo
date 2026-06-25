@@ -96,6 +96,10 @@ ergo review --base origin/main --format json --fail-on major
 | Command | Description |
 | --- | --- |
 | `ergo review` | Review local changes (the default command — bare `ergo` runs it) |
+| `ergo review findings` | Replay the last review from cache (no re-run, no cost) |
+| `ergo fix [--id … / --all]` | Apply suggested fixes from the last review to the working tree |
+| `ergo describe` | Generate a PR/commit title + description from the diff |
+| `ergo chat` | Interactively ask questions about your changes |
 | `ergo auth login` | Connect a ChatGPT/Codex subscription or API key |
 | `ergo auth import` | Import an existing Codex CLI credential (`~/.codex/auth.json`) |
 | `ergo auth status` / `logout` | Show / remove the active credential |
@@ -103,6 +107,10 @@ ergo review --base origin/main --format json --fail-on major
 | `ergo config init` / `show` / `validate` | Manage `.ergo.yaml` |
 | `ergo learn add` / `list` / `rm` | Teach ergo durable review preferences |
 | `ergo models` | List available models and pricing |
+| `ergo stats` | Local usage: reviews, tokens, and cost |
+| `ergo update` | Self-update to the latest release |
+| `ergo install-hook [--uninstall]` | Install a pre-push/pre-commit review gate |
+| `ergo mcp` | Run as an MCP server (review tools for Claude Code / Cursor) |
 
 ### `ergo review` options
 
@@ -215,6 +223,24 @@ in `reviews.tools`.
 
 Use `--fail-on major` to block merges on serious findings. ergo ships a ready
 [`ergo-review.yml`](./.github/workflows/ergo-review.yml) you can copy.
+
+## Editor & agent integration
+
+ergo speaks two integration protocols:
+
+- **NDJSON agent stream** — `ergo review --agent` emits one JSON event per line
+  (a superset of CodeRabbit's protocol). Wire it into Claude Code, Cursor, Kiro,
+  Codex CLI, or any agent that consumes streamed findings.
+- **MCP server** — `ergo mcp` exposes `ergo_review`, `ergo_findings`,
+  `ergo_list_learnings`, and `ergo_add_learning` over stdio. Register it with any
+  MCP client:
+
+  ```json
+  // Claude Code / Cursor MCP config
+  { "mcpServers": { "ergo": { "command": "ergo", "args": ["mcp"] } } }
+  ```
+
+A ready-to-install Claude Code plugin lives in [`.claude-plugin/`](./.claude-plugin/).
 
 ## How ergo compares
 
