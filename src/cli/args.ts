@@ -11,6 +11,7 @@ export const KNOWN_COMMANDS = new Set([
   'models',
   'stats',
   'update',
+  'mcp',
   'install-hook',
 ]);
 

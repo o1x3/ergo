@@ -10,6 +10,7 @@ import { doctorCommand } from '@/cli/commands/doctor';
 import { fixCommand } from '@/cli/commands/fix';
 import { hookCommand } from '@/cli/commands/hook';
 import { learnCommand } from '@/cli/commands/learn';
+import { mcpCommand } from '@/cli/commands/mcp';
 import { modelsCommand } from '@/cli/commands/models';
 import { findingsCommand, reviewCommand } from '@/cli/commands/review';
 import { statsCommand } from '@/cli/commands/stats';
@@ -36,6 +37,7 @@ const main = defineCommand({
     models: modelsCommand,
     stats: statsCommand,
     update: updateCommand,
+    mcp: mcpCommand,
     'install-hook': hookCommand,
   },
 });
