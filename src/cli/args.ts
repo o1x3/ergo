@@ -3,11 +3,14 @@ export const KNOWN_COMMANDS = new Set([
   'review',
   'findings',
   'fix',
+  'describe',
   'auth',
   'config',
   'doctor',
   'learn',
   'models',
+  'stats',
+  'update',
   'install-hook',
 ]);
 

@@ -15,6 +15,7 @@ import {
 import { isGitRepo, repoRoot } from '@/git/repo';
 import { resolveClient } from '@/inference/resolve';
 import { loadLearningsForPrompt } from '@/memory/learnings';
+import { recordUsage } from '@/memory/usage';
 import { AgentEmitter } from '@/output/agent';
 import { renderJson } from '@/output/json';
 import { renderMarkdown } from '@/output/markdown';
@@ -420,8 +421,9 @@ export const reviewCommand = defineCommand({
       review.stats.filesSkipped += skippedByFilter;
     }
 
-    // Persist for `ergo review findings` replay and `ergo fix`.
+    // Persist for `ergo review findings` replay and `ergo fix`; log usage.
     await saveReviewCache(root, finalDiff, review).catch(() => {});
+    await recordUsage(root, review.stats).catch(() => {});
 
     // Emit output.
     emitOutput(format, review, finalDiff, agentEmitter);

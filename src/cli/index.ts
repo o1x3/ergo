@@ -4,12 +4,15 @@ import { defineCommand, runMain } from 'citty';
 import { withDefaultCommand } from '@/cli/args';
 import { authCommand } from '@/cli/commands/auth';
 import { configCommand } from '@/cli/commands/config';
+import { describeCommand } from '@/cli/commands/describe';
 import { doctorCommand } from '@/cli/commands/doctor';
 import { fixCommand } from '@/cli/commands/fix';
 import { hookCommand } from '@/cli/commands/hook';
 import { learnCommand } from '@/cli/commands/learn';
 import { modelsCommand } from '@/cli/commands/models';
 import { findingsCommand, reviewCommand } from '@/cli/commands/review';
+import { statsCommand } from '@/cli/commands/stats';
+import { updateCommand } from '@/cli/commands/update';
 import { VERSION } from '@/version';
 
 const main = defineCommand({
@@ -23,11 +26,14 @@ const main = defineCommand({
     review: reviewCommand,
     findings: findingsCommand,
     fix: fixCommand,
+    describe: describeCommand,
     auth: authCommand,
     config: configCommand,
     doctor: doctorCommand,
     learn: learnCommand,
     models: modelsCommand,
+    stats: statsCommand,
+    update: updateCommand,
     'install-hook': hookCommand,
   },
 });
