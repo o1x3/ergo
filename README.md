@@ -204,10 +204,12 @@ repo config. See [`.ergo.yaml`](./.ergo.yaml) (ergo's own config) for a full exa
 
 When the relevant tools are installed, ergo runs them on the changed lines and
 feeds their findings to the model as grounding (the model verifies, dedupes, and
-prioritizes rather than parroting raw output). Supported out of the box: **ruff,
-eslint, shellcheck, semgrep, hadolint, yamllint, mypy, gitleaks** (+ actionlint,
-markdownlint, clippy). Run `ergo doctor` to see what's installed. Toggle per-tool
-in `reviews.tools`.
+prioritizes rather than parroting raw output). Structured parsers ship for
+**ruff, eslint, shellcheck, semgrep, hadolint, yamllint, mypy, gitleaks,
+golangci-lint, rubocop, actionlint, stylelint** (plus markdownlint & clippy as
+raw grounding) — covering Python, JS/TS, Go, Ruby, Rust, shell, Docker, YAML,
+CSS/SCSS, GitHub Actions, markdown, secrets, and multi-language SAST. Run
+`ergo doctor` to see what's installed; toggle per-tool in `reviews.tools`.
 
 ## CI integration
 

@@ -315,6 +315,153 @@ const gitleaks: ToolSpec = {
   },
 };
 
+// ---- golangci-lint (go) ----
+const golangciLint: ToolSpec = {
+  name: 'golangci-lint',
+  bin: 'golangci-lint',
+  category: 'lint',
+  applies: byLang('go'),
+  buildArgs: (_files, ctx) => {
+    const cfg = ctx.configFile ? ['-c', ctx.configFile] : [];
+    return ['run', '--out-format', 'json', ...cfg];
+  },
+  parse: (out) => {
+    const data = safeJson<{
+      Issues?: Array<{
+        FromLinter?: string;
+        Text?: string;
+        Severity?: string;
+        Pos?: { Filename?: string; Line?: number; Column?: number };
+      }>;
+    }>(out.stdout);
+    if (!data?.Issues) return [];
+    return data.Issues.map((i) => ({
+      tool: 'golangci-lint',
+      file: i.Pos?.Filename ?? '',
+      line: i.Pos?.Line,
+      column: i.Pos?.Column,
+      ruleId: i.FromLinter,
+      severity: i.Severity === 'error' ? 'error' : 'warning',
+      message: i.Text ?? '',
+    }));
+  },
+};
+
+// ---- rubocop (ruby) ----
+const rubocop: ToolSpec = {
+  name: 'rubocop',
+  bin: 'rubocop',
+  category: 'lint',
+  applies: byLang('ruby'),
+  buildArgs: (files) => ['--format', 'json', ...files],
+  parse: (out) => {
+    const data = safeJson<{
+      files?: Array<{
+        path?: string;
+        offenses?: Array<{
+          severity?: string;
+          message?: string;
+          cop_name?: string;
+          location?: { start_line?: number; line?: number; column?: number };
+        }>;
+      }>;
+    }>(out.stdout);
+    if (!data?.files) return [];
+    const findings: StaticFinding[] = [];
+    for (const f of data.files) {
+      for (const o of f.offenses ?? []) {
+        findings.push({
+          tool: 'rubocop',
+          file: f.path ?? '',
+          line: o.location?.start_line ?? o.location?.line,
+          column: o.location?.column,
+          ruleId: o.cop_name,
+          severity:
+            o.severity === 'error' || o.severity === 'fatal'
+              ? 'error'
+              : o.severity === 'convention' || o.severity === 'refactor'
+                ? 'info'
+                : 'warning',
+          message: o.message ?? '',
+        });
+      }
+    }
+    return findings;
+  },
+};
+
+// ---- actionlint (github actions) ----
+const actionlint: ToolSpec = {
+  name: 'actionlint',
+  bin: 'actionlint',
+  category: 'lint',
+  applies: byLang('yaml'),
+  buildArgs: (files) => {
+    const wf = files.filter((f) => /\.github\/workflows\//.test(f));
+    return wf.length ? ['-format', '{{json .}}', ...wf] : null;
+  },
+  parse: (out) => {
+    const rows = safeJson<
+      Array<{
+        message?: string;
+        filepath?: string;
+        line?: number;
+        column?: number;
+        kind?: string;
+      }>
+    >(out.stdout);
+    if (!rows) return [];
+    return rows.map((r) => ({
+      tool: 'actionlint',
+      file: r.filepath ?? '',
+      line: r.line,
+      column: r.column,
+      ruleId: r.kind,
+      severity: 'warning' as StaticSeverity,
+      message: r.message ?? '',
+    }));
+  },
+};
+
+// ---- stylelint (css/scss) ----
+const stylelint: ToolSpec = {
+  name: 'stylelint',
+  bin: 'stylelint',
+  category: 'lint',
+  applies: byLang('css', 'scss'),
+  buildArgs: (files) => ['--formatter', 'json', ...files],
+  parse: (out) => {
+    const rows = safeJson<
+      Array<{
+        source?: string;
+        warnings?: Array<{
+          line?: number;
+          column?: number;
+          rule?: string;
+          severity?: string;
+          text?: string;
+        }>;
+      }>
+    >(out.stdout);
+    if (!rows) return [];
+    const findings: StaticFinding[] = [];
+    for (const f of rows) {
+      for (const w of f.warnings ?? []) {
+        findings.push({
+          tool: 'stylelint',
+          file: f.source ?? '',
+          line: w.line,
+          column: w.column,
+          ruleId: w.rule,
+          severity: w.severity === 'error' ? 'error' : 'warning',
+          message: w.text ?? '',
+        });
+      }
+    }
+    return findings;
+  },
+};
+
 // Text-only tools: their raw output is surfaced to the LLM as grounding without
 // structured parsing. Kept lean; each can gain a parser later.
 function textTool(
@@ -328,10 +475,6 @@ function textTool(
 }
 
 const TEXT_TOOLS: ToolSpec[] = [
-  textTool('actionlint', 'actionlint', 'lint', byLang('yaml'), (files) => {
-    const wf = files.filter((f) => /\.github\/workflows\//.test(f));
-    return wf.length ? wf : null;
-  }),
   textTool(
     'markdownlint',
     'markdownlint',
@@ -354,6 +497,10 @@ export const ALL_TOOLS: ToolSpec[] = [
   yamllint,
   mypy,
   gitleaks,
+  golangciLint,
+  rubocop,
+  actionlint,
+  stylelint,
   ...TEXT_TOOLS,
 ];
 

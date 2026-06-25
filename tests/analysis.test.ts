@@ -121,6 +121,106 @@ describe('semgrep parser', () => {
   });
 });
 
+describe('golangci-lint parser', () => {
+  test('parses Issues array', () => {
+    const t = getToolByName('golangci-lint')!;
+    const out = {
+      stdout: JSON.stringify({
+        Issues: [
+          {
+            FromLinter: 'errcheck',
+            Text: 'unchecked error',
+            Severity: 'error',
+            Pos: { Filename: 'main.go', Line: 12, Column: 3 },
+          },
+        ],
+      }),
+      stderr: '',
+      exitCode: 1,
+    };
+    const f = t.parse!(out, ctx);
+    expect(f[0]!.file).toBe('main.go');
+    expect(f[0]!.line).toBe(12);
+    expect(f[0]!.ruleId).toBe('errcheck');
+    expect(f[0]!.severity).toBe('error');
+  });
+});
+
+describe('rubocop parser', () => {
+  test('maps offenses and severities', () => {
+    const t = getToolByName('rubocop')!;
+    const out = {
+      stdout: JSON.stringify({
+        files: [
+          {
+            path: 'app.rb',
+            offenses: [
+              {
+                severity: 'convention',
+                message: 'use snake_case',
+                cop_name: 'Naming/MethodName',
+                location: { start_line: 5, column: 2 },
+              },
+            ],
+          },
+        ],
+      }),
+      stderr: '',
+      exitCode: 1,
+    };
+    const f = t.parse!(out, ctx);
+    expect(f[0]!.line).toBe(5);
+    expect(f[0]!.severity).toBe('info');
+    expect(f[0]!.ruleId).toBe('Naming/MethodName');
+  });
+});
+
+describe('actionlint & stylelint parsers', () => {
+  test('actionlint json array', () => {
+    const t = getToolByName('actionlint')!;
+    const out = {
+      stdout: JSON.stringify([
+        {
+          message: 'bad',
+          filepath: '.github/workflows/ci.yml',
+          line: 3,
+          column: 1,
+          kind: 'syntax',
+        },
+      ]),
+      stderr: '',
+      exitCode: 1,
+    };
+    const f = t.parse!(out, ctx);
+    expect(f[0]!.file).toBe('.github/workflows/ci.yml');
+    expect(f[0]!.line).toBe(3);
+  });
+  test('stylelint warnings', () => {
+    const t = getToolByName('stylelint')!;
+    const out = {
+      stdout: JSON.stringify([
+        {
+          source: 'a.css',
+          warnings: [
+            {
+              line: 2,
+              column: 1,
+              rule: 'color-no-invalid-hex',
+              severity: 'error',
+              text: 'bad hex',
+            },
+          ],
+        },
+      ]),
+      stderr: '',
+      exitCode: 1,
+    };
+    const f = t.parse!(out, ctx);
+    expect(f[0]!.severity).toBe('error');
+    expect(f[0]!.ruleId).toBe('color-no-invalid-hex');
+  });
+});
+
 describe('malformed output', () => {
   test('parsers return [] on junk', () => {
     for (const name of [
@@ -129,6 +229,10 @@ describe('malformed output', () => {
       'shellcheck',
       'semgrep',
       'hadolint',
+      'golangci-lint',
+      'rubocop',
+      'actionlint',
+      'stylelint',
     ]) {
       const tool = getToolByName(name)!;
       expect(
