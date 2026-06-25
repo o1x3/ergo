@@ -1,0 +1,377 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "number"
+    },
+    "language": {
+      "type": "string"
+    },
+    "tone_instructions": {
+      "type": "string",
+      "maxLength": 250
+    },
+    "early_access": {
+      "type": "boolean"
+    },
+    "inheritance": {
+      "type": "boolean"
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "type": "string",
+          "enum": [
+            "codex",
+            "openai",
+            "anthropic",
+            "openai-compatible"
+          ]
+        },
+        "default": {
+          "type": "string"
+        },
+        "triage": {
+          "type": "string"
+        },
+        "deep": {
+          "type": "string"
+        },
+        "self_hosted_url": {
+          "type": "string"
+        },
+        "base_url": {
+          "type": "string"
+        },
+        "max_budget_usd": {
+          "type": "number"
+        },
+        "temperature": {
+          "type": "number"
+        },
+        "reasoning_effort": {
+          "type": "string",
+          "enum": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ]
+        }
+      },
+      "additionalProperties": {}
+    },
+    "reviews": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "profile": {
+          "type": "string",
+          "enum": [
+            "chill",
+            "assertive"
+          ]
+        },
+        "sensitivity": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "min_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "type_verify": {
+          "type": "boolean"
+        },
+        "whole_repo_context": {
+          "type": "boolean"
+        },
+        "history_context": {
+          "type": "boolean"
+        },
+        "incremental": {
+          "type": "boolean"
+        },
+        "file_limit": {
+          "type": "number"
+        },
+        "ultra_file_limit": {
+          "type": "number"
+        },
+        "high_level_summary": {
+          "type": "boolean"
+        },
+        "changed_files_summary": {
+          "type": "boolean"
+        },
+        "sequence_diagrams": {
+          "type": "boolean"
+        },
+        "estimate_code_review_effort": {
+          "type": "boolean"
+        },
+        "merge_confidence": {
+          "type": "boolean"
+        },
+        "enable_prompt_for_ai_agents": {
+          "type": "boolean"
+        },
+        "assess_linked_issues": {
+          "type": "boolean"
+        },
+        "path_filters": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path_instructions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "instructions": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "instructions"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ignore": {
+          "type": "object",
+          "properties": {
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "head_branches": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "base_branches": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "pr_labels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "pr_titles": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "max_changed_lines": {
+              "type": "number"
+            },
+            "ignore_usernames": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "honor_linguist_generated": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "tools": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "config_file": {
+                "type": "string"
+              },
+              "level": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": {}
+          }
+        },
+        "custom_agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "enabled": {
+                "type": "boolean"
+              },
+              "instructions": {
+                "type": "string"
+              },
+              "file_paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "include": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "exclude": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "name",
+              "instructions"
+            ],
+            "additionalProperties": {}
+          }
+        }
+      },
+      "additionalProperties": {}
+    },
+    "knowledge_base": {
+      "type": "object",
+      "properties": {
+        "opt_out": {
+          "type": "boolean"
+        },
+        "web_search": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": {}
+        },
+        "code_guidelines": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "filePatterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": {}
+        },
+        "context_files": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "patterns": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": {}
+        },
+        "learnings": {
+          "type": "object",
+          "properties": {
+            "scope": {
+              "type": "string",
+              "enum": [
+                "local",
+                "global",
+                "auto"
+              ]
+            },
+            "approval_delay": {
+              "type": "number"
+            },
+            "senior_reviewers": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": {}
+        }
+      },
+      "additionalProperties": {}
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "default_format": {
+          "type": "string",
+          "enum": [
+            "pretty",
+            "plain",
+            "json",
+            "agent",
+            "sarif",
+            "markdown"
+          ]
+        },
+        "color": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ]
+        },
+        "markdown_diagrams": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": {}
+    }
+  },
+  "additionalProperties": {},
+  "title": "ergo configuration (.ergo.yaml)"
+}

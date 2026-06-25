@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/o1x3/ergo/main/schema.json
+# ergo's own review configuration (dogfooding).
+version: 1
+language: en-US
+tone_instructions: "Be direct and specific. Prioritize correctness and security."
+
+model:
+  max_budget_usd: 0
+
+reviews:
+  profile: assertive
+  min_confidence: 0.6
+  sequence_diagrams: true
+  path_filters:
+    - "!**/*.lock"
+    - "!dist/**"
+    - "!node_modules/**"
+  path_instructions:
+    - path: "src/**/*.ts"
+      instructions: >-
+        Enforce strict null handling, avoid `any`, prefer early returns.
+        Flag any place a credential/token could be logged or leaked.
+    - path: "src/auth/**"
+      instructions: "Be extra strict about OAuth/PKCE correctness and secret handling."
+    - path: "tests/**"
+      instructions: "Tests should assert behavior, not implementation details."
+  tools:
+    eslint: { enabled: false }   # ergo uses biome, not eslint
+    ruff: { enabled: true }
+    semgrep: { enabled: true }
+    gitleaks: { enabled: true }
+    shellcheck: { enabled: true }
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+  learnings:
+    scope: auto
+
+output:
+  default_format: pretty
+  color: auto

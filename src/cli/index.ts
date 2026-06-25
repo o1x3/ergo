@@ -2,6 +2,10 @@
 import { defineCommand, runMain } from 'citty';
 
 import { authCommand } from '@/cli/commands/auth';
+import { configCommand } from '@/cli/commands/config';
+import { doctorCommand } from '@/cli/commands/doctor';
+import { learnCommand } from '@/cli/commands/learn';
+import { modelsCommand } from '@/cli/commands/models';
 import { reviewCommand } from '@/cli/commands/review';
 import { VERSION } from '@/version';
 
@@ -15,11 +19,22 @@ const main = defineCommand({
   subCommands: {
     review: reviewCommand,
     auth: authCommand,
+    config: configCommand,
+    doctor: doctorCommand,
+    learn: learnCommand,
+    models: modelsCommand,
   },
 });
 
 // Known subcommands; anything else (e.g. `ergo --base main`) implies `review`.
-const KNOWN = new Set(['review', 'auth']);
+const KNOWN = new Set([
+  'review',
+  'auth',
+  'config',
+  'doctor',
+  'learn',
+  'models',
+]);
 const HELP_VERSION = new Set(['--help', '-h', '--version', '-v']);
 
 function withDefaultCommand(argv: string[]): string[] {
