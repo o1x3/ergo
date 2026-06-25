@@ -36,10 +36,17 @@ export function renderSarif(review: ReviewResult): string {
       {
         physicalLocation: {
           artifactLocation: { uri: f.file },
-          region: {
-            startLine: f.startLine,
-            endLine: f.endLine,
-          },
+          // SARIF requires startLine >= 1 and endLine >= startLine; clamp so a
+          // stray 0/negative model value can't produce schema-invalid output
+          // that GitHub code-scanning rejects.
+          region: (() => {
+            const startLine = Math.max(1, Math.floor(f.startLine) || 1);
+            const endLine = Math.max(
+              startLine,
+              Math.floor(f.endLine) || startLine,
+            );
+            return { startLine, endLine };
+          })(),
         },
       },
     ],

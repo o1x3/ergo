@@ -16,12 +16,16 @@ export function renderFileDiff(file: FileDiff): string {
     lines.push(`(was: ${file.oldPath})`);
   }
   for (const hunk of file.hunks) {
-    lines.push(hunk.header ? `@@ ${hunk.header} @@` : '@@');
+    // Keep the real `@@ -old,n +new,m @@` ranges so pure-deletion hunks still
+    // carry a usable new-file anchor for findings.
+    const range = `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+    lines.push(hunk.header ? `${range} ${hunk.header}` : range);
     for (const l of hunk.lines) {
       if (l.type === 'add') {
         lines.push(`${String(l.newLine).padStart(6)} + ${l.content}`);
       } else if (l.type === 'del') {
-        lines.push(`${' '.repeat(6)} - ${l.content}`);
+        // Show the old line number (labeled) so deletions are anchorable.
+        lines.push(`${`-${l.oldLine}`.padStart(6)} - ${l.content}`);
       } else {
         lines.push(`${String(l.newLine).padStart(6)}   ${l.content}`);
       }
@@ -70,14 +74,27 @@ export function serializeDiffSet(
   const parts: string[] = [];
   let used = 0;
 
+  // Minimum useful budget for a single file before we bother including it.
+  const MIN_FILE_BUDGET = 2_000;
+
   for (const file of ranked) {
     const rendered = renderFileDiff(file);
-    if (used + rendered.length > maxChars && included.length > 0) {
-      skipped.push(file);
+    const remaining = maxChars - used;
+    if (rendered.length > remaining) {
+      // Hard-cap a single oversized file by truncating it (even the first one),
+      // so `maxChars` is a real bound — not "first file emitted in full".
+      if (remaining < MIN_FILE_BUDGET) {
+        skipped.push(file);
+        continue;
+      }
+      const truncated = `${rendered.slice(0, remaining - 40)}\n[diff truncated — file too large]`;
+      parts.push(truncated);
+      used += truncated.length + 2;
+      included.push(file);
       continue;
     }
     parts.push(rendered);
-    used += rendered.length + 1;
+    used += rendered.length + 2;
     included.push(file);
   }
 

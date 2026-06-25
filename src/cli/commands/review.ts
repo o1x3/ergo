@@ -259,18 +259,36 @@ export const reviewCommand = defineCommand({
       return;
     }
 
+    // Validate --type so a typo doesn't silently fall back to the working tree.
+    const typeArg = args.type as string | undefined;
+    if (
+      typeArg !== undefined &&
+      !['all', 'committed', 'uncommitted', 'staged'].includes(typeArg)
+    ) {
+      log.error(
+        `Invalid --type '${typeArg}'. Use all | committed | uncommitted | staged.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
     // Resolve provider/model.
     let credential: Awaited<ReturnType<typeof getActiveCredential>>;
     try {
       credential = await getActiveCredential();
     } catch (err) {
-      handleFatal(err, format);
+      handleFatal(err, format, 'auth');
       process.exitCode = 1;
       return;
     }
 
     const isFast = Boolean(args.light || args.fast);
     const isDeep = Boolean(args.deep || args.ultra);
+    if (isFast && isDeep) {
+      log.error('--light/--fast and --deep/--ultra are mutually exclusive.');
+      process.exitCode = 1;
+      return;
+    }
     const modelOverride =
       (args.model as string | undefined) ??
       (isDeep
@@ -324,24 +342,22 @@ export const reviewCommand = defineCommand({
     }
 
     if (finalDiff.files.length === 0) {
+      const emptyReview: ReviewResult = {
+        summary: emptySummary(),
+        findings: [],
+        stats: emptyStats(resolved),
+      };
       if (format === 'agent') {
         const emitter = new AgentEmitter();
         emitter.reviewContext(finalDiff, root);
-        emitter.complete({
-          findingsBySeverity: {
-            critical: 0,
-            major: 0,
-            minor: 0,
-            suggestion: 0,
-            info: 0,
-          },
-        } as never);
-      } else if (format === 'json') {
-        process.stdout.write(
-          `${renderJson({ summary: emptySummary(), findings: [], stats: emptyStats(resolved) }, finalDiff)}\n`,
-        );
-      } else {
+        emitter.complete(emptyReview.stats);
+      } else if (format === 'pretty' || format === 'plain') {
+        // Human formats: a short message is friendlier than an empty report.
         log.info('No changes to review.');
+      } else {
+        // Machine formats (json/sarif/markdown) must emit a well-formed empty
+        // document so downstream consumers (e.g. SARIF upload) don't choke.
+        emitOutput(format, emptyReview, finalDiff, undefined);
       }
       return;
     }
@@ -527,9 +543,19 @@ function normalizeFormat(format: string | undefined): OutputFormat {
   return 'pretty';
 }
 
-function handleFatal(err: unknown, _format: OutputFormat): void {
+// Report a fatal error. In `agent` mode, emit a structured NDJSON error event so
+// the agent stream is never silently empty; otherwise log to stderr.
+function handleFatal(
+  err: unknown,
+  format: OutputFormat,
+  agentErrorType: 'auth' | 'connection' | 'review' | 'unknown' = 'unknown',
+): void {
   const message = err instanceof Error ? err.message : String(err);
-  log.error(message);
+  if (format === 'agent') {
+    new AgentEmitter().error(agentErrorType, message, false);
+  } else {
+    log.error(message);
+  }
 }
 
 function emptySummary() {

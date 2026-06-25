@@ -119,6 +119,11 @@ export function createAiSdkClient(config: AiSdkClientConfig): ModelClient {
           req.onTextDelta?.(chunk.text);
         } else if (chunk.type === 'reasoning-delta') {
           req.onReasoningDelta?.(chunk.text);
+        } else if (chunk.type === 'error') {
+          // Provider/stream errors surface as an 'error' part; surface them
+          // instead of silently returning a truncated/empty response.
+          const e = (chunk as { error?: unknown }).error;
+          throw e instanceof Error ? e : new Error(String(e));
         }
       }
 

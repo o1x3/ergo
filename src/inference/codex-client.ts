@@ -64,9 +64,20 @@ export function isRetryableStatus(status: number): boolean {
   return status === 429 || (status >= 500 && status <= 599);
 }
 
-async function defaultSleep(ms: number): Promise<void> {
+async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return;
-  await new Promise<void>((resolve) => setTimeout(resolve, ms));
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
 export async function fetchCodexWithRetry(
@@ -74,9 +85,10 @@ export async function fetchCodexWithRetry(
   url: string,
   init: RequestInit,
   options: {
-    sleep?: (ms: number) => Promise<void>;
+    sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
     retry?: CodexRetryOptions;
     random?: () => number;
+    signal?: AbortSignal;
   } = {},
 ): Promise<Response> {
   const cfg = { ...DEFAULT_RETRY, ...(options.retry ?? {}) };
@@ -104,7 +116,7 @@ export async function fetchCodexWithRetry(
         // ignore
       }
     }
-    await sleep(wait + jitter);
+    await sleep(wait + jitter, options.signal);
   }
   return response as Response;
 }
@@ -179,6 +191,25 @@ export function resolveCodexUrl(baseUrl: string): string {
 
 type SseEvent = Record<string, unknown> & { type?: string };
 
+// SSE event boundary: a blank line, tolerating LF or CRLF.
+const SSE_BOUNDARY = /\r?\n\r?\n/;
+
+function* framesFrom(chunk: string): Generator<SseEvent> {
+  const dataLines = chunk
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith('data:'))
+    .map((line) => line.slice(5).trim());
+  if (dataLines.length === 0) return;
+  const data = dataLines.join('\n').trim();
+  if (data && data !== '[DONE]') {
+    try {
+      yield JSON.parse(data) as SseEvent;
+    } catch {
+      // ignore malformed keep-alive frames
+    }
+  }
+}
+
 async function* parseSse(response: Response): AsyncGenerator<SseEvent> {
   if (!response.body) return;
   const reader = response.body.getReader();
@@ -191,30 +222,25 @@ async function* parseSse(response: Response): AsyncGenerator<SseEvent> {
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
 
-      let boundary = buffer.indexOf('\n\n');
-      while (boundary !== -1) {
-        const chunk = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-
-        const dataLines = chunk
-          .split('\n')
-          .filter((line) => line.startsWith('data:'))
-          .map((line) => line.slice(5).trim());
-
-        if (dataLines.length > 0) {
-          const data = dataLines.join('\n').trim();
-          if (data && data !== '[DONE]') {
-            try {
-              yield JSON.parse(data) as SseEvent;
-            } catch {
-              // ignore malformed keep-alive frames
-            }
-          }
-        }
-        boundary = buffer.indexOf('\n\n');
+      let m = SSE_BOUNDARY.exec(buffer);
+      while (m) {
+        const chunk = buffer.slice(0, m.index);
+        buffer = buffer.slice(m.index + m[0].length);
+        yield* framesFrom(chunk);
+        m = SSE_BOUNDARY.exec(buffer);
       }
     }
+    // Flush the decoder and parse any trailing un-terminated frame.
+    buffer += decoder.decode();
+    if (buffer.trim()) yield* framesFrom(buffer);
   } finally {
+    // Cancel the body on early termination so the connection tears down, then
+    // release the reader lock.
+    try {
+      await reader.cancel();
+    } catch {
+      // ignore
+    }
     try {
       reader.releaseLock();
     } catch {
@@ -334,7 +360,7 @@ export function createCodexClient(config: CodexClientConfig): ModelClient {
           body: JSON.stringify(body),
           signal: req.signal,
         },
-        { sleep: config.sleepImpl, retry: config.retry },
+        { sleep: config.sleepImpl, retry: config.retry, signal: req.signal },
       );
 
       if (!response.ok) {

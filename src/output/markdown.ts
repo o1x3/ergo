@@ -2,6 +2,21 @@ import type { DiffSet } from '@/git/diff';
 import { describeTarget } from '@/review/prompts';
 import type { ReviewResult, Severity } from '@/review/schema';
 
+// Sanitize a value for use inside a markdown table cell (no newlines / raw pipes).
+function cell(s: string): string {
+  return s.replace(/\r?\n/g, ' ').replace(/\|/g, '\\|').replace(/`/g, "'");
+}
+
+// Pick a fence longer than the longest backtick run in `content`, so code/diagram
+// content containing ``` can't break out of (or inject into) the fenced block.
+function fence(content: string): string {
+  let longest = 0;
+  for (const m of content.matchAll(/`+/g)) {
+    longest = Math.max(longest, m[0].length);
+  }
+  return '`'.repeat(Math.max(3, longest + 1));
+}
+
 const SEVERITY_EMOJI: Record<Severity, string> = {
   critical: '⛔',
   major: '🔴',
@@ -35,7 +50,7 @@ export function renderMarkdown(review: ReviewResult, diff: DiffSet): string {
     md.push('| File | Change |');
     md.push('| --- | --- |');
     for (const f of summary.fileSummaries) {
-      md.push(`| \`${f.path}\` | ${f.summary.replace(/\|/g, '\\|')} |`);
+      md.push(`| \`${cell(f.path)}\` | ${cell(f.summary)} |`);
     }
     md.push('');
   }
@@ -50,9 +65,11 @@ export function renderMarkdown(review: ReviewResult, diff: DiffSet): string {
   if (summary.sequenceDiagram?.trim()) {
     md.push('## Sequence diagram');
     md.push('');
-    md.push('```mermaid');
-    md.push(summary.sequenceDiagram.trim());
-    md.push('```');
+    const diagram = summary.sequenceDiagram.trim();
+    const f = fence(diagram);
+    md.push(`${f}mermaid`);
+    md.push(diagram);
+    md.push(f);
     md.push('');
   }
 
@@ -83,9 +100,11 @@ export function renderMarkdown(review: ReviewResult, diff: DiffSet): string {
         md.push('');
         md.push('**Suggested fix:**');
         md.push('');
-        md.push('```');
-        md.push(f.suggestedPatch.trimEnd());
-        md.push('```');
+        const patch = f.suggestedPatch.trimEnd();
+        const fc = fence(patch);
+        md.push(fc);
+        md.push(patch);
+        md.push(fc);
       }
       md.push('');
     }

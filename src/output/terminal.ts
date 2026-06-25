@@ -21,12 +21,28 @@ function severityTag(sev: Severity): string {
   return SEVERITY_LABEL[sev](sev.toUpperCase());
 }
 
+// Strip terminal control/escape sequences from model-supplied text so a crafted
+// diff/finding can't move the cursor, recolor, or inject escapes into the user's
+// terminal. Keeps tab (0x09) and newline (0x0a). Codepoint-based to avoid any
+// control characters appearing in source.
+function clean(s: string): string {
+  let out = '';
+  for (const ch of s) {
+    const c = ch.codePointAt(0) ?? 0;
+    const isControl =
+      (c < 0x20 && c !== 0x09 && c !== 0x0a) ||
+      c === 0x7f ||
+      (c >= 0x80 && c <= 0x9f);
+    if (!isControl) out += ch;
+  }
+  return out;
+}
+
 function bar(): string {
   return pc.dim('─'.repeat(60));
 }
 
-// Render a full review for humans. `color` toggles ANSI; `plain` drops emoji and
-// keeps it pipe-friendly markdown-ish text.
+// Render a full review for humans. `plain` drops emoji and keeps it pipe-friendly.
 export function renderTerminal(
   review: ReviewResult,
   options: { plain?: boolean } = {},
@@ -43,28 +59,28 @@ export function renderTerminal(
   if (summary.summary) {
     out.push('');
     out.push(pc.bold('Summary'));
-    out.push(summary.summary);
+    out.push(clean(summary.summary));
   }
 
   if (summary.fileSummaries.length > 0) {
     out.push('');
     out.push(pc.bold('Changed files'));
     for (const f of summary.fileSummaries) {
-      out.push(`  ${pc.cyan(f.path)} — ${f.summary}`);
+      out.push(`  ${pc.cyan(clean(f.path))} — ${clean(f.summary)}`);
     }
   }
 
   if (summary.walkthrough && !options.plain) {
     out.push('');
     out.push(pc.bold('Walkthrough'));
-    out.push(summary.walkthrough);
+    out.push(clean(summary.walkthrough));
   }
 
   if (summary.sequenceDiagram?.trim()) {
     out.push('');
     out.push(pc.bold('Sequence diagram'));
     out.push('```mermaid');
-    out.push(summary.sequenceDiagram.trim());
+    out.push(clean(summary.sequenceDiagram.trim()));
     out.push('```');
   }
 
@@ -81,21 +97,21 @@ export function renderTerminal(
       out.push('');
       const icon = options.plain ? '' : `${SEVERITY_ICON[f.severity]} `;
       out.push(
-        `${icon}${severityTag(f.severity)} ${pc.dim(`[${f.category}]`)} ${pc.bold(f.title)} ${pc.dim(`(${f.id}, conf ${f.confidence.toFixed(2)})`)}`,
+        `${icon}${severityTag(f.severity)} ${pc.dim(`[${clean(f.category)}]`)} ${pc.bold(clean(f.title))} ${pc.dim(`(${f.id}, conf ${f.confidence.toFixed(2)})`)}`,
       );
       const loc =
         f.startLine === f.endLine
-          ? `${f.file}:${f.startLine}`
-          : `${f.file}:${f.startLine}-${f.endLine}`;
+          ? `${clean(f.file)}:${f.startLine}`
+          : `${clean(f.file)}:${f.startLine}-${f.endLine}`;
       out.push(`  ${pc.underline(loc)}`);
-      out.push(indent(f.description, '  '));
+      out.push(indent(clean(f.description), '  '));
       if (f.rationale && f.rationale !== f.description) {
-        out.push(indent(pc.dim(f.rationale), '  '));
+        out.push(indent(pc.dim(clean(f.rationale)), '  '));
       }
       if (f.suggestedPatch?.trim()) {
         out.push(`  ${pc.dim('suggested fix:')}`);
         out.push('  ```');
-        out.push(indent(f.suggestedPatch.trimEnd(), '  '));
+        out.push(indent(clean(f.suggestedPatch.trimEnd()), '  '));
         out.push('  ```');
       }
     }
