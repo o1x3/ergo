@@ -59,5 +59,9 @@ for entry in "${all_targets[@]}"; do
   built=$((built + 1))
 done
 
+# bun --compile can emit an external sourcemap named after the entry even with
+# --sourcemap=none; drop any stray non-binary artifacts so only binaries ship.
+find "$OUT" -type f ! -name 'ergo-*' -delete 2>/dev/null || true
+
 echo "✓ Built $built binar$([ "$built" -eq 1 ] && echo y || echo ies) in $OUT"
 ls -lh "$OUT"

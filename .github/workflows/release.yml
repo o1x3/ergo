@@ -56,7 +56,8 @@ jobs:
       - name: Collect + checksum
         run: |
           mkdir -p dist/release
-          cp artifacts/* dist/release/
+          # Only ship the platform binaries (guard against stray build artifacts).
+          cp artifacts/ergo-* dist/release/
           cd dist/release
           sha256sum ergo-* > SHA256SUMS.txt
           ls -lh
