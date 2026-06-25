@@ -91,7 +91,7 @@ export async function refreshCredentialIfNearExpiry(
   credential: CredentialRecord | undefined,
   options: RefreshOptions = {},
 ): Promise<CredentialRecord | undefined> {
-  if (!credential || credential.type !== 'oauth') {
+  if (credential?.type !== 'oauth') {
     return credential;
   }
   if (!credential.expiresAt || !credential.refreshToken) {

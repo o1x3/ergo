@@ -1,0 +1,60 @@
+name: ergo review
+
+# Dogfood: ergo reviews its own pull requests. No-ops gracefully unless an
+# inference credential secret is configured (ERGO_API_KEY / OPENAI_API_KEY /
+# ANTHROPIC_API_KEY), so forks and unconfigured repos stay green.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - run: bun install --frozen-lockfile
+
+      - name: Check for credentials
+        id: cred
+        env:
+          ERGO_API_KEY: ${{ secrets.ERGO_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -n "$ERGO_API_KEY$OPENAI_API_KEY$ANTHROPIC_API_KEY" ]; then
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "No inference credential configured — skipping ergo review."
+          fi
+
+      - name: Run ergo review (SARIF)
+        if: steps.cred.outputs.have == 'true'
+        env:
+          ERGO_API_KEY: ${{ secrets.ERGO_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          bun run src/cli/index.ts review \
+            --base origin/${{ github.base_ref }} \
+            --format sarif > ergo.sarif || true
+
+      - name: Upload SARIF to code scanning
+        if: steps.cred.outputs.have == 'true'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ergo.sarif
+        continue-on-error: true
