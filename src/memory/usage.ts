@@ -93,7 +93,11 @@ export function summarizeUsage(records: UsageRecord[]): UsageSummary {
     summary.costUsd += r.costUsd;
     summary.findings += r.findings;
     if (r.subscription) summary.subscriptionReviews += 1;
-    const m = (summary.byModel[r.model] ??= { reviews: 0, costUsd: 0 });
+    let m = summary.byModel[r.model];
+    if (!m) {
+      m = { reviews: 0, costUsd: 0 };
+      summary.byModel[r.model] = m;
+    }
     m.reviews += 1;
     m.costUsd += r.costUsd;
   }

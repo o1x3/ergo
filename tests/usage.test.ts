@@ -27,8 +27,20 @@ describe('summarizeUsage', () => {
 
   test('aggregates totals and per-model breakdown', () => {
     const s = summarizeUsage([
-      rec({ model: 'gpt-5.4', tokensInput: 100, tokensOutput: 50, costUsd: 0.01, findings: 2 }),
-      rec({ model: 'gpt-5.4', tokensInput: 200, tokensOutput: 80, costUsd: 0.02, findings: 1 }),
+      rec({
+        model: 'gpt-5.4',
+        tokensInput: 100,
+        tokensOutput: 50,
+        costUsd: 0.01,
+        findings: 2,
+      }),
+      rec({
+        model: 'gpt-5.4',
+        tokensInput: 200,
+        tokensOutput: 80,
+        costUsd: 0.02,
+        findings: 1,
+      }),
       rec({ model: 'claude-opus-4-8', costUsd: 0.05, findings: 3 }),
       rec({ model: 'gpt-5.4', subscription: true, findings: 0 }),
     ]);
