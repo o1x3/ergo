@@ -1,12 +1,15 @@
 #!/usr/bin/env bun
 import { defineCommand, runMain } from 'citty';
 
+import { withDefaultCommand } from '@/cli/args';
 import { authCommand } from '@/cli/commands/auth';
 import { configCommand } from '@/cli/commands/config';
 import { doctorCommand } from '@/cli/commands/doctor';
+import { fixCommand } from '@/cli/commands/fix';
+import { hookCommand } from '@/cli/commands/hook';
 import { learnCommand } from '@/cli/commands/learn';
 import { modelsCommand } from '@/cli/commands/models';
-import { reviewCommand } from '@/cli/commands/review';
+import { findingsCommand, reviewCommand } from '@/cli/commands/review';
 import { VERSION } from '@/version';
 
 const main = defineCommand({
@@ -18,33 +21,15 @@ const main = defineCommand({
   },
   subCommands: {
     review: reviewCommand,
+    findings: findingsCommand,
+    fix: fixCommand,
     auth: authCommand,
     config: configCommand,
     doctor: doctorCommand,
     learn: learnCommand,
     models: modelsCommand,
+    'install-hook': hookCommand,
   },
 });
-
-// Known subcommands; anything else (e.g. `ergo --base main`) implies `review`.
-const KNOWN = new Set([
-  'review',
-  'auth',
-  'config',
-  'doctor',
-  'learn',
-  'models',
-]);
-const HELP_VERSION = new Set(['--help', '-h', '--version', '-v']);
-
-function withDefaultCommand(argv: string[]): string[] {
-  const first = argv[0];
-  if (!first || first.startsWith('-')) {
-    if (first && HELP_VERSION.has(first)) return argv;
-    return ['review', ...argv];
-  }
-  if (!KNOWN.has(first)) return ['review', ...argv];
-  return argv;
-}
 
 runMain(main, { rawArgs: withDefaultCommand(process.argv.slice(2)) });

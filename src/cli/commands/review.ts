@@ -22,6 +22,11 @@ import { renderSarif } from '@/output/sarif';
 import { renderTerminal } from '@/output/terminal';
 import { OUTPUT_FORMATS, type OutputFormat } from '@/output/types';
 import {
+  diffSetFromCache,
+  loadReviewCache,
+  saveReviewCache,
+} from '@/review/cache';
+import {
   gatherCustomAgents,
   gatherGuidelines,
   gatherPathInstructions,
@@ -100,6 +105,35 @@ function applyFileLimit(diff: DiffSet, limit: number): DiffSet {
   const files = ranked.slice(0, limit);
   return { ...diff, files };
 }
+
+// `ergo review findings` / `ergo findings` — replay the last review from cache
+// without re-running (and without spending tokens).
+export const findingsCommand = defineCommand({
+  meta: {
+    name: 'findings',
+    description: 'Replay the last review from cache (no re-run, no cost)',
+  },
+  args: {
+    format: {
+      type: 'string',
+      description: `Output: ${OUTPUT_FORMATS.join(' | ')}`,
+    },
+    dir: { type: 'string', description: 'Path to the git repo' },
+  },
+  async run({ args }) {
+    const cwd = args.dir ? resolvePath(args.dir as string) : process.cwd();
+    const root = (await isGitRepo(cwd)) ? await repoRoot(cwd) : cwd;
+    const cached = await loadReviewCache(root);
+    if (!cached) {
+      log.error('No cached review found. Run `ergo review` first.');
+      process.exitCode = 1;
+      return;
+    }
+    const format = normalizeFormat(args.format as string | undefined);
+    log.dim(`replaying review from ${cached.savedAt}`);
+    emitOutput(format, cached.review, diffSetFromCache(cached), undefined);
+  },
+});
 
 export const reviewCommand = defineCommand({
   meta: {
@@ -385,6 +419,9 @@ export const reviewCommand = defineCommand({
     if (skippedByFilter > 0) {
       review.stats.filesSkipped += skippedByFilter;
     }
+
+    // Persist for `ergo review findings` replay and `ergo fix`.
+    await saveReviewCache(root, finalDiff, review).catch(() => {});
 
     // Emit output.
     emitOutput(format, review, finalDiff, agentEmitter);
