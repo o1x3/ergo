@@ -18,6 +18,7 @@ export type AnalysisResult = {
 
 const TOOL_TIMEOUT_MS = 60_000;
 const MAX_GROUNDING_FINDINGS = 80;
+const MAX_TEXT_OUTPUT_CHARS = 4_000;
 
 // Map file -> changed new-line ranges, so we only surface lint findings that
 // actually touch this changeset (not pre-existing noise).
@@ -70,6 +71,7 @@ export async function runStaticAnalysis(
   const fileByPath = new Map(diff.files.map((f) => [f.path, f]));
   const changedRanges = new Map<string, Array<[number, number]>>();
   for (const f of diff.files) changedRanges.set(f.path, changedLineRanges(f));
+  const textBlocks: string[] = [];
 
   for (const tool of ALL_TOOLS) {
     if (!isEnabled(tool, toggles)) continue;
@@ -127,27 +129,41 @@ export async function runStaticAnalysis(
         if (!lineIsChanged(changedRanges.get(rel) ?? [], f.line)) continue;
         result.findings.push({ ...f, file: rel });
       }
+    } else {
+      // Text-only tool: surface its raw output (capped) as grounding so the
+      // model can weigh it, even without a structured parser.
+      const raw = `${out.stdout}\n${out.stderr}`.trim();
+      if (raw && out.exitCode !== 0) {
+        textBlocks.push(
+          `### ${tool.name}\n${raw.slice(0, MAX_TEXT_OUTPUT_CHARS)}`,
+        );
+      }
     }
-    // (Text-only tools currently contribute presence/coverage; their raw output
-    // can be wired into grounding here in a future iteration.)
   }
 
-  result.groundingText = renderGrounding(result.findings);
+  result.groundingText = renderGrounding(result.findings, textBlocks);
   return result;
 }
 
-function renderGrounding(findings: StaticFinding[]): string | undefined {
-  if (findings.length === 0) return undefined;
-  const lines = findings
-    .slice(0, MAX_GROUNDING_FINDINGS)
-    .map(
-      (f) =>
-        `- [${f.tool}${f.ruleId ? `:${f.ruleId}` : ''}] ${f.file}${
-          f.line ? `:${f.line}` : ''
-        } (${f.severity}) ${f.message}`,
-    );
-  if (findings.length > MAX_GROUNDING_FINDINGS) {
-    lines.push(`- …and ${findings.length - MAX_GROUNDING_FINDINGS} more`);
+function renderGrounding(
+  findings: StaticFinding[],
+  textBlocks: string[],
+): string | undefined {
+  const sections: string[] = [];
+  if (findings.length > 0) {
+    const lines = findings
+      .slice(0, MAX_GROUNDING_FINDINGS)
+      .map(
+        (f) =>
+          `- [${f.tool}${f.ruleId ? `:${f.ruleId}` : ''}] ${f.file}${
+            f.line ? `:${f.line}` : ''
+          } (${f.severity}) ${f.message}`,
+      );
+    if (findings.length > MAX_GROUNDING_FINDINGS) {
+      lines.push(`- …and ${findings.length - MAX_GROUNDING_FINDINGS} more`);
+    }
+    sections.push(lines.join('\n'));
   }
-  return lines.join('\n');
+  if (textBlocks.length > 0) sections.push(textBlocks.join('\n\n'));
+  return sections.length > 0 ? sections.join('\n\n') : undefined;
 }
