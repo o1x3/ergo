@@ -2,6 +2,7 @@ import { resolve as resolvePath } from 'node:path';
 
 import { defineCommand } from 'citty';
 
+import { runStaticAnalysis } from '@/analysis/runner';
 import { getActiveCredential } from '@/auth/resolve';
 import { makePathFilter } from '@/config/filters';
 import { loadConfig } from '@/config/load';
@@ -164,6 +165,10 @@ export const reviewCommand = defineCommand({
       description: 'Only report findings at/above this confidence (0-1)',
     },
     'no-summary': { type: 'boolean', description: 'Skip the summary pass' },
+    'no-static': {
+      type: 'boolean',
+      description: 'Skip bundled static-analysis grounding',
+    },
     'fail-on': {
       type: 'string',
       description: `Exit non-zero if any finding >= severity (${SEVERITIES.join('|')})`,
@@ -296,6 +301,17 @@ export const reviewCommand = defineCommand({
     const pathInstructions = gatherPathInstructions(finalDiff, config);
     const customAgents = gatherCustomAgents(finalDiff, config);
 
+    // Static-analysis grounding: run installed linters on changed lines and feed
+    // their findings to the model to verify/dedupe/prioritize.
+    const analysis = await runStaticAnalysis(finalDiff, {
+      repoRoot: root,
+      toggles: config.reviews.tools,
+      enabled: !args['no-static'],
+    });
+    if (analysis.ran.length > 0) {
+      log.dim(`static analysis: ${analysis.ran.join(', ')}`);
+    }
+
     const customFocusParts = [
       args.prompt as string | undefined,
       instructionFiles,
@@ -311,6 +327,7 @@ export const reviewCommand = defineCommand({
       guidelines,
       pathInstructions,
       learnings,
+      staticFindings: analysis.groundingText,
       language: config.language,
       toneInstructions: config.toneInstructions,
     };
