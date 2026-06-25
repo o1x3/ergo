@@ -2,10 +2,7 @@ import { exec } from '@/util/exec';
 
 export class GitError extends Error {}
 
-async function git(
-  args: string[],
-  cwd?: string,
-): Promise<string> {
+async function git(args: string[], cwd?: string): Promise<string> {
   const { stdout, stderr, exitCode } = await exec(['git', ...args], { cwd });
   if (exitCode !== 0) {
     throw new GitError(

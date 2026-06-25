@@ -1,7 +1,12 @@
+import { readFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
 import { defineCommand } from 'citty';
 
 import {
   createApiKeyCredential,
+  extractAccountIdFromJwt,
   loginWithBrowser,
   loginWithDeviceCode,
 } from '@/auth/codex';
@@ -166,10 +171,100 @@ const logoutCommand = defineCommand({
   },
 });
 
+function jwtExpiry(jwt: string | undefined): string | undefined {
+  if (!jwt) return undefined;
+  try {
+    const payload = jwt.split('.')[1];
+    if (!payload) return undefined;
+    const json = JSON.parse(
+      Buffer.from(payload, 'base64url').toString('utf8'),
+    ) as {
+      exp?: number;
+    };
+    return json.exp ? new Date(json.exp * 1000).toISOString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Convert a Codex-CLI-style auth.json into an ergo CredentialRecord.
+function credentialFromCodexAuth(data: unknown): CredentialRecord | undefined {
+  const obj = data as {
+    tokens?: {
+      id_token?: string;
+      access_token?: string;
+      refresh_token?: string;
+      account_id?: string;
+    };
+    OPENAI_API_KEY?: string | null;
+  };
+  const tokens = obj?.tokens;
+  if (tokens?.access_token) {
+    return {
+      provider: 'codex',
+      type: 'oauth',
+      apiKey: obj.OPENAI_API_KEY ?? undefined,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token,
+      accountId:
+        tokens.account_id ??
+        extractAccountIdFromJwt(tokens.id_token) ??
+        extractAccountIdFromJwt(tokens.access_token),
+      expiresAt: jwtExpiry(tokens.access_token) ?? jwtExpiry(tokens.id_token),
+      createdAt: new Date().toISOString(),
+    };
+  }
+  // ergo/juno-style { credential: {...} }
+  const wrapped = (data as { credential?: CredentialRecord }).credential;
+  if (wrapped?.accessToken || wrapped?.apiKey) return wrapped;
+  return undefined;
+}
+
+const importCommand = defineCommand({
+  meta: {
+    name: 'import',
+    description: 'Import an existing Codex CLI / ChatGPT credential',
+  },
+  args: {
+    from: {
+      type: 'string',
+      description: 'Path to an auth.json (defaults to ~/.codex/auth.json)',
+    },
+  },
+  async run({ args }) {
+    const candidates = args.from
+      ? [args.from as string]
+      : [
+          join(homedir(), '.codex', 'auth.json'),
+          join(homedir(), '.juno', 'auth.json'),
+        ];
+    for (const path of candidates) {
+      try {
+        const data = JSON.parse(await readFile(path, 'utf8'));
+        const cred = credentialFromCodexAuth(data);
+        if (cred) {
+          await saveCredential(authFilePath(), cred);
+          log.success(
+            `Imported ${cred.provider} ${cred.type} credential from ${pc.dim(path)}.`,
+          );
+          return;
+        }
+      } catch {
+        // try next candidate
+      }
+    }
+    log.error(
+      'No importable credential found. Pass --from <path> to an auth.json, or run `ergo auth login`.',
+    );
+    process.exitCode = 1;
+  },
+});
+
 export const authCommand = defineCommand({
   meta: { name: 'auth', description: 'Manage authentication' },
   subCommands: {
     login: loginCommand,
+    import: importCommand,
     status: statusCommand,
     logout: logoutCommand,
   },

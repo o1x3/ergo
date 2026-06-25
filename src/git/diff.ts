@@ -213,7 +213,10 @@ export function parseUnifiedDiff(raw: string): FileDiff[] {
       current.path = line.slice('copy to '.length);
       continue;
     }
-    if (line.startsWith('Binary files') || line.startsWith('GIT binary patch')) {
+    if (
+      line.startsWith('Binary files') ||
+      line.startsWith('GIT binary patch')
+    ) {
       current.binary = true;
       continue;
     }
@@ -374,10 +377,9 @@ export async function fileAtRef(
   ref: string,
   cwd?: string,
 ): Promise<string | undefined> {
-  const { stdout, exitCode } = await exec(
-    ['git', 'show', `${ref}:${path}`],
-    { cwd },
-  );
+  const { stdout, exitCode } = await exec(['git', 'show', `${ref}:${path}`], {
+    cwd,
+  });
   return exitCode === 0 ? stdout : undefined;
 }
 
