@@ -4,7 +4,30 @@ All notable changes to ergo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and ergo adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.1.1] - 2026-06-26
+
+### Fixed
+- Three adversarial red-team rounds hardened the codebase (57 verified bugs):
+  - **diff parser** no longer misreads content lines starting with `-- `/`++ `
+    as file headers (was dropping lines / corrupting line numbers).
+  - **fix** detects stale patches via content hash, skips overlapping findings,
+    guards path traversal, and preserves line endings.
+  - **review** honors `config output.default_format`, validates `--fail-on` /
+    `--type` / `--min-confidence`, emits well-formed empty docs for json/sarif,
+    and emits structured agent errors on early failure.
+  - **inference** surfaces ai-sdk stream errors; codex SSE handles CRLF, flushes
+    the final frame, cancels the body on early exit, and backoff is abort-aware;
+    provider-aware cost accounting.
+  - **outputs** strip terminal escapes, clamp SARIF line numbers, and escape
+    markdown table cells / code fences. **learnings** use collision-free ids and
+    atomic writes.
+- Releases now ship only platform binaries (dropped a stray sourcemap).
+
+### Added
+- Static-analysis parsers for golangci-lint, rubocop, actionlint, stylelint;
+  text-only tools (markdownlint, clippy) now contribute grounding.
+
+## [0.1.0] - 2026-06-25
 
 ### Added
 - **Review engine** — multi-pass AI review (findings + summary) over local git
@@ -26,4 +49,5 @@ All notable changes to ergo are documented here. The format follows
 - **Distribution** — cross-platform single-file binaries, `install.sh` /
   `install.ps1`, CI, and a release workflow with checksums.
 
-[Unreleased]: https://github.com/o1x3/ergo/commits/main
+[0.1.1]: https://github.com/o1x3/ergo/releases/tag/v0.1.1
+[0.1.0]: https://github.com/o1x3/ergo/releases/tag/v0.1.0
