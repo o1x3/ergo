@@ -1,4 +1,11 @@
-import { chmod, mkdir, readFile, rm } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { refreshOAuthCredential } from '@/auth/codex';
@@ -20,8 +27,14 @@ export async function saveCredential(
 ): Promise<void> {
   await mkdir(dirname(authFile), { recursive: true });
   const payload: AuthFile = { version: 1, credential };
-  await Bun.write(authFile, `${JSON.stringify(payload, null, 2)}\n`);
-  await chmod(authFile, 0o600);
+  // Write to a 0600 temp file then atomically rename into place, so the
+  // credential is never momentarily world-readable (no write-then-chmod window).
+  const tmp = `${authFile}.${process.pid}.tmp`;
+  await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  await chmod(tmp, 0o600); // override umask
+  await rename(tmp, authFile);
 }
 
 export async function loadCredential(

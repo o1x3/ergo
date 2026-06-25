@@ -3,6 +3,7 @@ import { defineCommand, runMain } from 'citty';
 
 import { withDefaultCommand } from '@/cli/args';
 import { authCommand } from '@/cli/commands/auth';
+import { chatCommand } from '@/cli/commands/chat';
 import { configCommand } from '@/cli/commands/config';
 import { describeCommand } from '@/cli/commands/describe';
 import { doctorCommand } from '@/cli/commands/doctor';
@@ -27,6 +28,7 @@ const main = defineCommand({
     findings: findingsCommand,
     fix: fixCommand,
     describe: describeCommand,
+    chat: chatCommand,
     auth: authCommand,
     config: configCommand,
     doctor: doctorCommand,

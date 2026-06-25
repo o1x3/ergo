@@ -41,6 +41,7 @@ export type ModelPricing = {
   input: number;
   output: number;
   cacheRead?: number;
+  cacheWrite?: number;
 };
 
 export const PRICING: Record<string, ModelPricing> = {
@@ -69,17 +70,30 @@ export function lookupPricing(model: string): ModelPricing | undefined {
 
 export function estimateCostUsd(
   model: string,
-  usage: { input: number; output: number; cacheRead?: number } | undefined,
+  usage:
+    | { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+    | undefined,
+  opts: { provider?: Provider } = {},
 ): number | undefined {
   if (!usage) return undefined;
   const price = lookupPricing(model);
   if (!price) return undefined;
   const cached = usage.cacheRead ?? 0;
-  const freshInput = Math.max(0, usage.input - cached);
-  const cacheRate = price.cacheRead ?? price.input;
+  const cacheWrite = usage.cacheWrite ?? 0;
+  // Provider token-accounting semantics differ:
+  //  - OpenAI/Codex: `input` already INCLUDES cached tokens, so subtract them.
+  //  - Anthropic: `input` EXCLUDES cache-read/cache-write tokens (they are
+  //    separate counters), so the fresh-input charge is `input` as-is.
+  const anthropicStyle = opts.provider === 'anthropic';
+  const freshInput = anthropicStyle
+    ? usage.input
+    : Math.max(0, usage.input - cached);
+  const cacheReadRate = price.cacheRead ?? price.input;
+  const cacheWriteRate = price.cacheWrite ?? price.input * 1.25;
   return (
     (freshInput * price.input) / 1_000_000 +
-    (cached * cacheRate) / 1_000_000 +
+    (cached * cacheReadRate) / 1_000_000 +
+    (cacheWrite * cacheWriteRate) / 1_000_000 +
     (usage.output * price.output) / 1_000_000
   );
 }

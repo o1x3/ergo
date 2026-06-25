@@ -91,11 +91,16 @@ export async function worktreeStatus(cwd?: string): Promise<WorktreeStatus> {
     ['status', '--porcelain=v1', '--untracked-files=all', '-z'],
     cwd,
   );
-  const entries = out.split('\0').filter((e) => e.length > 0);
+  // With -z, fields are NUL-separated and a rename/copy (X or Y is R/C) emits a
+  // SECOND field for the source path that belongs to the same entry — consume it
+  // so it isn't mistaken for a new status record.
+  const fields = out.split('\0');
   let hasStaged = false;
   let hasUnstaged = false;
   const untracked: string[] = [];
-  for (const entry of entries) {
+  for (let i = 0; i < fields.length; i++) {
+    const entry = fields[i];
+    if (!entry || entry.length === 0) continue;
     const x = entry[0];
     const y = entry[1];
     const path = entry.slice(3);
@@ -105,6 +110,9 @@ export async function worktreeStatus(cwd?: string): Promise<WorktreeStatus> {
     }
     if (x && x !== ' ' && x !== '?') hasStaged = true;
     if (y && y !== ' ' && y !== '?') hasUnstaged = true;
+    if (x === 'R' || x === 'C' || y === 'R' || y === 'C') {
+      i++; // skip the rename/copy source field
+    }
   }
   return {
     hasStagedChanges: hasStaged,

@@ -97,33 +97,43 @@ export async function completeStructured<T>(
   const messages = [...req.messages];
 
   for (let attempt = 0; attempt <= maxRepairs; attempt++) {
-    const result = await req.client.complete({
-      model: req.model,
-      system: req.system,
-      messages,
-      temperature: req.temperature,
-      maxOutputTokens: req.maxOutputTokens,
-      reasoningEffort: req.reasoningEffort,
-      jsonSchema: req.jsonSchema,
-      signal: req.signal,
-    });
-    usage = combineUsage(usage, result.usage);
-
-    const jsonText = extractJson(result.text) ?? result.text.trim();
+    let resultText = '';
     let parsed: unknown;
     let parseError: string | undefined;
-    try {
-      parsed = JSON.parse(jsonText);
-    } catch (err) {
-      parseError = err instanceof Error ? err.message : String(err);
-    }
 
-    if (parseError === undefined) {
-      const validation = req.schema.safeParse(parsed);
-      if (validation.success) {
-        return { value: validation.data, usage, raw: jsonText };
+    // The ai-sdk `generateObject` path validates server-side and THROWS on a
+    // schema/JSON violation rather than returning bad text, so we catch the
+    // throw and route it through the same repair loop as a manual parse failure.
+    try {
+      const result = await req.client.complete({
+        model: req.model,
+        system: req.system,
+        messages,
+        temperature: req.temperature,
+        maxOutputTokens: req.maxOutputTokens,
+        reasoningEffort: req.reasoningEffort,
+        jsonSchema: req.jsonSchema,
+        signal: req.signal,
+      });
+      usage = combineUsage(usage, result.usage);
+      resultText = result.text;
+      const jsonText = extractJson(result.text) ?? result.text.trim();
+      try {
+        parsed = JSON.parse(jsonText);
+      } catch (err) {
+        parseError = err instanceof Error ? err.message : String(err);
       }
-      parseError = z.prettifyError(validation.error);
+      if (parseError === undefined) {
+        const validation = req.schema.safeParse(parsed);
+        if (validation.success) {
+          return { value: validation.data, usage, raw: jsonText };
+        }
+        parseError = z.prettifyError(validation.error);
+      }
+    } catch (err) {
+      // A genuine abort should not be swallowed by the repair loop.
+      if (err instanceof Error && err.name === 'AbortError') throw err;
+      parseError = err instanceof Error ? err.message : String(err);
     }
 
     if (attempt === maxRepairs) {
@@ -133,7 +143,9 @@ export async function completeStructured<T>(
     }
 
     // Feed the bad output back and ask for a corrected version.
-    messages.push({ role: 'assistant', content: result.text });
+    if (resultText) {
+      messages.push({ role: 'assistant', content: resultText });
+    }
     messages.push({
       role: 'user',
       content:

@@ -185,6 +185,62 @@ export function parseUnifiedDiff(raw: string): FileDiff[] {
 
     if (!current) continue;
 
+    // A new hunk header. `diff --git` (handled above) and `@@` never carry a
+    // body marker, so they are unambiguous even mid-hunk.
+    if (line.startsWith('@@')) {
+      pushHunk();
+      const parsed = parseHunkHeader(line);
+      if (parsed) {
+        hunk = { ...parsed, lines: [] };
+        oldLineNo = parsed.oldStart;
+        newLineNo = parsed.newStart;
+      }
+      continue;
+    }
+
+    // Inside a hunk body, process content lines BEFORE any file-header matching:
+    // a deleted line whose content starts with "-- " serializes to "--- ", and
+    // an added line starting with "++ " serializes to "+++ ". Matching those as
+    // headers would drop lines and corrupt line numbers. Body lines always carry
+    // a leading marker (space/+/-/\), so this is unambiguous.
+    if (hunk) {
+      const marker = line[0];
+      if (marker === '+') {
+        hunk.lines.push({
+          type: 'add',
+          content: line.slice(1),
+          newLine: newLineNo++,
+        });
+        current.additions++;
+        continue;
+      }
+      if (marker === '-') {
+        hunk.lines.push({
+          type: 'del',
+          content: line.slice(1),
+          oldLine: oldLineNo++,
+        });
+        current.deletions++;
+        continue;
+      }
+      if (marker === ' ') {
+        hunk.lines.push({
+          type: 'context',
+          content: line.slice(1),
+          oldLine: oldLineNo++,
+          newLine: newLineNo++,
+        });
+        continue;
+      }
+      if (marker === '\\') {
+        // "\ No newline at end of file" — nothing to record.
+        continue;
+      }
+      // Not a body line — the hunk has ended; fall through to header detection.
+      pushHunk();
+    }
+
+    // File-header region (no active hunk).
     if (line.startsWith('new file mode')) {
       current.status = 'added';
       continue;
@@ -233,41 +289,6 @@ export function parseUnifiedDiff(raw: string): FileDiff[] {
         current.path = p.slice(2);
         current.language = inferLanguage(current.path);
       }
-      continue;
-    }
-    if (line.startsWith('@@')) {
-      pushHunk();
-      const parsed = parseHunkHeader(line);
-      if (parsed) {
-        hunk = { ...parsed, lines: [] };
-        oldLineNo = parsed.oldStart;
-        newLineNo = parsed.newStart;
-      }
-      continue;
-    }
-
-    if (hunk) {
-      if (line.startsWith('\\')) {
-        // "\ No newline at end of file" — attach to nothing meaningful.
-        continue;
-      }
-      const marker = line[0];
-      const content = line.slice(1);
-      if (marker === '+') {
-        hunk.lines.push({ type: 'add', content, newLine: newLineNo++ });
-        current.additions++;
-      } else if (marker === '-') {
-        hunk.lines.push({ type: 'del', content, oldLine: oldLineNo++ });
-        current.deletions++;
-      } else if (marker === ' ') {
-        hunk.lines.push({
-          type: 'context',
-          content,
-          oldLine: oldLineNo++,
-          newLine: newLineNo++,
-        });
-      }
-      // any other line (e.g. empty trailing) is ignored
     }
   }
 
@@ -283,7 +304,7 @@ async function untrackedFileDiff(
   // Use git's own no-index diff so binary detection and large-file handling
   // match everything else. It exits 1 when files differ (expected).
   const { stdout } = await exec(
-    ['git', 'diff', '--no-index', '--no-color', '/dev/null', path],
+    ['git', 'diff', '--no-index', '--no-color', '--', '/dev/null', path],
     { cwd: root },
   );
   const parsed = parseUnifiedDiff(stdout);

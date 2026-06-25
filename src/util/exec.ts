@@ -29,10 +29,19 @@ export async function exec(
 
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let hardKill: ReturnType<typeof setTimeout> | undefined;
   if (options.timeoutMs && options.timeoutMs > 0) {
     timer = setTimeout(() => {
       timedOut = true;
-      proc.kill();
+      proc.kill(); // SIGTERM
+      // Escalate to SIGKILL if the child ignores SIGTERM.
+      hardKill = setTimeout(() => {
+        try {
+          proc.kill(9);
+        } catch {
+          // already gone
+        }
+      }, 2000);
     }, options.timeoutMs);
   }
 
@@ -42,6 +51,7 @@ export async function exec(
     proc.exited,
   ]);
   if (timer) clearTimeout(timer);
+  if (hardKill) clearTimeout(hardKill);
 
   return {
     stdout,

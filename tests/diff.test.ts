@@ -110,6 +110,35 @@ diff --git a/b.ts b/b.ts
     expect(parseUnifiedDiff('')).toEqual([]);
     expect(parseUnifiedDiff('   \n  ')).toEqual([]);
   });
+
+  test('content lines starting with "-- "/"++ " are not misparsed as headers', () => {
+    // Deleting a SQL comment "-- old" serializes to "--- old"; adding "++ x"
+    // serializes to "+++ x". These must be treated as body lines, not headers.
+    const raw = `diff --git a/q.sql b/q.sql
+--- a/q.sql
++++ b/q.sql
+@@ -1,3 +1,3 @@
+ SELECT 1;
+-- old comment
++++ new marker
+ SELECT 2;
+`;
+    const files = parseUnifiedDiff(raw);
+    expect(files.length).toBe(1);
+    const f = files[0]!;
+    expect(f.path).toBe('q.sql'); // path NOT clobbered to "new marker"
+    expect(f.additions).toBe(1);
+    expect(f.deletions).toBe(1);
+    const del = f.hunks[0]!.lines.find((l) => l.type === 'del');
+    expect(del!.content).toBe('- old comment');
+    expect(del!.oldLine).toBe(2);
+    const add = f.hunks[0]!.lines.find((l) => l.type === 'add');
+    expect(add!.content).toBe('++ new marker');
+    expect(add!.newLine).toBe(2);
+    // trailing context keeps correct numbering
+    const ctx = f.hunks[0]!.lines.filter((l) => l.type === 'context');
+    expect(ctx[1]!.newLine).toBe(3);
+  });
 });
 
 describe('inferLanguage', () => {

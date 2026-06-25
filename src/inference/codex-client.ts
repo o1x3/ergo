@@ -92,7 +92,10 @@ export async function fetchCodexWithRetry(
     }
     const headerWait = parseRetryAfter(response.headers.get('retry-after'));
     const exp = Math.min(cfg.maxDelayMs, cfg.baseDelayMs * 2 ** (attempt - 1));
-    const wait = headerWait ?? exp;
+    // Cap the server-provided Retry-After too, so a hostile/huge header can't
+    // stall us indefinitely.
+    const wait =
+      headerWait !== null ? Math.min(cfg.maxDelayMs, headerWait) : exp;
     const jitter = random() * wait * cfg.jitterRatio;
     if (response.body) {
       try {
@@ -369,7 +372,18 @@ export function createCodexClient(config: CodexClientConfig): ModelClient {
         ) {
           const resp = (
             event as {
-              response?: { status?: string; usage?: Record<string, number> };
+              response?: {
+                status?: string;
+                usage?: {
+                  input_tokens?: number;
+                  output_tokens?: number;
+                  input_tokens_details?: { cached_tokens?: number };
+                  output_tokens_details?: { reasoning_tokens?: number };
+                  // tolerate older flat shapes too
+                  reasoning_tokens?: number;
+                  cached_input_tokens?: number;
+                };
+              };
             }
           ).response;
           finishReason = resp?.status ?? 'stop';
@@ -378,8 +392,10 @@ export function createCodexClient(config: CodexClientConfig): ModelClient {
             usage = {
               input: u.input_tokens ?? 0,
               output: u.output_tokens ?? 0,
-              reasoning: u.reasoning_tokens,
-              cacheRead: u.input_tokens_cached ?? u.cached_input_tokens,
+              reasoning:
+                u.output_tokens_details?.reasoning_tokens ?? u.reasoning_tokens,
+              cacheRead:
+                u.input_tokens_details?.cached_tokens ?? u.cached_input_tokens,
             };
           }
           break;

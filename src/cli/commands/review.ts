@@ -98,13 +98,26 @@ function applyFileFilters(
 type ReturnTypeOfLoad = Awaited<ReturnType<typeof loadConfig>>['config'];
 
 // Prioritize highest-risk files when the changeset exceeds the file cap.
-function applyFileLimit(diff: DiffSet, limit: number): DiffSet {
-  if (limit <= 0 || diff.files.length <= limit) return diff;
+function applyFileLimit(
+  diff: DiffSet,
+  limit: number,
+): { diff: DiffSet; dropped: number } {
+  if (limit <= 0 || diff.files.length <= limit) {
+    return { diff, dropped: 0 };
+  }
   const ranked = [...diff.files].sort(
     (a, b) => b.additions + b.deletions - (a.additions + a.deletions),
   );
   const files = ranked.slice(0, limit);
-  return { ...diff, files };
+  return {
+    diff: {
+      ...diff,
+      files,
+      totalAdditions: files.reduce((n, f) => n + f.additions, 0),
+      totalDeletions: files.reduce((n, f) => n + f.deletions, 0),
+    },
+    dropped: diff.files.length - files.length,
+  };
 }
 
 // `ergo review findings` / `ergo findings` — replay the last review from cache
@@ -215,11 +228,6 @@ export const reviewCommand = defineCommand({
     },
   },
   async run({ args }) {
-    const format = normalizeFormat(args.format as string | undefined);
-    const machine =
-      format === 'agent' || format === 'json' || format === 'sarif';
-    if (args.quiet || machine) setQuiet(true);
-
     const cwd = args.dir ? resolvePath(args.dir as string) : process.cwd();
     if (!(await isGitRepo(cwd))) {
       log.error(
@@ -232,6 +240,24 @@ export const reviewCommand = defineCommand({
 
     const { config, errors: configErrors } = await loadConfig(root);
     for (const e of configErrors) log.warn(`config: ${e}`);
+
+    // Effective output format: --format wins, else the configured default.
+    const format = normalizeFormat(
+      (args.format as string | undefined) ?? config.output.defaultFormat,
+    );
+    const machine =
+      format === 'agent' || format === 'json' || format === 'sarif';
+    if (args.quiet || machine) setQuiet(true);
+
+    // Validate --fail-on early so a typo can't silently disable a CI gate.
+    const failOn = args['fail-on'] as Severity | undefined;
+    if (failOn !== undefined && !SEVERITIES.includes(failOn)) {
+      log.error(
+        `Invalid --fail-on '${failOn}'. Use one of: ${SEVERITIES.join(', ')}.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
 
     // Resolve provider/model.
     let credential: Awaited<ReturnType<typeof getActiveCredential>>;
@@ -287,7 +313,15 @@ export const reviewCommand = defineCommand({
     const limit = isDeep
       ? config.reviews.ultraFileLimit
       : config.reviews.fileLimit;
-    const finalDiff = applyFileLimit(filtered, limit);
+    const { diff: finalDiff, dropped: droppedByLimit } = applyFileLimit(
+      filtered,
+      limit,
+    );
+    if (droppedByLimit > 0) {
+      log.warn(
+        `${droppedByLimit} lower-risk file(s) skipped (over the ${limit}-file cap; raise with reviews.file_limit or --deep).`,
+      );
+    }
 
     if (finalDiff.files.length === 0) {
       if (format === 'agent') {
@@ -313,9 +347,18 @@ export const reviewCommand = defineCommand({
     }
 
     // Build prompt context.
-    const minConfidence = args['min-confidence']
-      ? Number(args['min-confidence'])
-      : config.reviews.minConfidence;
+    let minConfidence = config.reviews.minConfidence;
+    if (args['min-confidence'] !== undefined) {
+      const n = Number(args['min-confidence']);
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        log.error(
+          `Invalid --min-confidence '${args['min-confidence']}'. Use a number in [0, 1].`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+      minConfidence = n;
+    }
     const profile =
       (args.profile as 'chill' | 'assertive' | undefined) ??
       config.reviews.profile;
@@ -337,11 +380,17 @@ export const reviewCommand = defineCommand({
     const customAgents = gatherCustomAgents(finalDiff, config);
 
     // Static-analysis grounding: run installed linters on changed lines and feed
-    // their findings to the model to verify/dedupe/prioritize.
+    // their findings to the model to verify/dedupe/prioritize. Tools run against
+    // the WORKING TREE, so changed-line filtering is only sound when the working
+    // tree is what's under review — skip for commit/range/base-commit targets.
+    const staticSafeTarget =
+      target.kind === 'working' ||
+      target.kind === 'staged' ||
+      target.kind === 'branch';
     const analysis = await runStaticAnalysis(finalDiff, {
       repoRoot: root,
       toggles: config.reviews.tools,
-      enabled: !args['no-static'],
+      enabled: !args['no-static'] && staticSafeTarget,
     });
     if (analysis.ran.length > 0) {
       log.dim(`static analysis: ${analysis.ran.join(', ')}`);
@@ -417,6 +466,7 @@ export const reviewCommand = defineCommand({
       return;
     }
 
+    review.stats.filesSkipped += droppedByLimit;
     if (skippedByFilter > 0) {
       review.stats.filesSkipped += skippedByFilter;
     }
@@ -428,9 +478,8 @@ export const reviewCommand = defineCommand({
     // Emit output.
     emitOutput(format, review, finalDiff, agentEmitter);
 
-    // Exit code policy.
-    const failOn = args['fail-on'] as Severity | undefined;
-    if (failOn && SEVERITY_RANK[failOn]) {
+    // Exit code policy (failOn validated above).
+    if (failOn) {
       const worst = review.findings.reduce(
         (max, f) => Math.max(max, SEVERITY_RANK[f.severity]),
         0,

@@ -108,15 +108,15 @@ async function mapLimit<T, R>(
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let cursor = 0;
-  const workers = Array.from(
-    { length: Math.min(limit, items.length) },
-    async () => {
-      while (cursor < items.length) {
-        const i = cursor++;
-        results[i] = await fn(items[i] as T, i);
-      }
-    },
-  );
+  // Always run at least one worker; a misconfigured concurrency <= 0 must not
+  // silently process zero items.
+  const workerCount = Math.max(1, Math.min(limit, items.length));
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (cursor < items.length) {
+      const i = cursor++;
+      results[i] = await fn(items[i] as T, i);
+    }
+  });
   await Promise.all(workers);
   return results;
 }
@@ -169,27 +169,47 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
 
   emit({ type: 'status', phase: 'reviewing' });
 
-  // Findings passes (one per batch), bounded concurrency.
+  // Findings passes (one per batch), bounded concurrency. Each batch is isolated:
+  // one batch failing (bad JSON after repair, rate limit, transient error) must
+  // not discard the findings already collected from the other batches.
   const sysFindings = findingsSystemPrompt(promptContext);
   const rawFindings: Finding[] = [];
+  let failedBatches = 0;
   await mapLimit(batches, concurrency, async (batch) => {
     const batchDiff: DiffSet = { ...diff, files: batch };
     const text = batch.map(renderFileDiff).join('\n\n');
     const user = findingsUserPrompt(batchDiff, text, promptContext);
-    const result = await completeStructured({
-      client: resolved.client,
-      model: resolved.model,
-      schema: findingsResultSchema,
-      jsonSchema: FINDINGS_JSON_SCHEMA,
-      system: sysFindings,
-      messages: [{ role: 'user', content: user }],
-      temperature: 0.1,
-      reasoningEffort: opts.reasoningEffort,
-      signal: opts.signal,
-    });
-    usage = combineUsage(usage, result.usage);
-    for (const f of result.value.findings) rawFindings.push(f);
+    try {
+      const result = await completeStructured({
+        client: resolved.client,
+        model: resolved.model,
+        schema: findingsResultSchema,
+        jsonSchema: FINDINGS_JSON_SCHEMA,
+        system: sysFindings,
+        messages: [{ role: 'user', content: user }],
+        temperature: 0.1,
+        reasoningEffort: opts.reasoningEffort,
+        signal: opts.signal,
+      });
+      usage = combineUsage(usage, result.usage);
+      for (const f of result.value.findings) rawFindings.push(f);
+    } catch (err) {
+      // A user abort should still cancel the whole review.
+      if (err instanceof Error && err.name === 'AbortError') throw err;
+      failedBatches += 1;
+      emit({
+        type: 'tool_skipped',
+        name: 'findings-batch',
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   });
+  if (failedBatches > 0 && rawFindings.length === 0 && batches.length > 0) {
+    // Every batch failed — surface it rather than reporting a misleading clean review.
+    throw new Error(
+      `All ${batches.length} review batch(es) failed. Check your credential, model, and connectivity.`,
+    );
+  }
 
   // Summary pass (parallelizable but cheap; run after to reuse the same client).
   let summary: SummaryResult;
@@ -263,7 +283,9 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
     findingsBySeverity,
     tokensInput: usage?.input ?? 0,
     tokensOutput: usage?.output ?? 0,
-    costUsd: resolved.subscription ? 0 : estimateCostUsd(resolved.model, usage),
+    costUsd: resolved.subscription
+      ? 0
+      : estimateCostUsd(resolved.model, usage, { provider: resolved.provider }),
     subscriptionCovered: resolved.subscription,
     model: resolved.model,
     provider: resolved.provider,

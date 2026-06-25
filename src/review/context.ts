@@ -47,7 +47,9 @@ export async function gatherGuidelines(
     );
     if (content?.trim()) {
       const block = `--- ${rel} ---\n${content.trim()}`;
-      if (total + block.length > MAX_TOTAL_CONTEXT_BYTES) break;
+      // Skip files that would overflow the budget, but keep checking smaller
+      // later files instead of stopping at the first oversized one.
+      if (total + block.length > MAX_TOTAL_CONTEXT_BYTES) continue;
       parts.push(block);
       total += block.length;
     }
