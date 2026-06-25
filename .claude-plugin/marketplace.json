@@ -1,0 +1,11 @@
+{
+  "name": "ergo",
+  "owner": { "name": "o1x3", "url": "https://github.com/o1x3" },
+  "plugins": [
+    {
+      "name": "ergo",
+      "source": ".",
+      "description": "Local-first AI code review + MCP review tools for Claude Code."
+    }
+  ]
+}

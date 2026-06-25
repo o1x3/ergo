@@ -1,0 +1,20 @@
+{
+  "name": "ergo",
+  "displayName": "ergo — AI code review",
+  "version": "0.1.0",
+  "description": "Local-first AI code review in your terminal. Review diffs, apply fixes, and expose review tools to Claude via MCP. Bring your own Codex/ChatGPT subscription or API key.",
+  "author": {
+    "name": "Karthik Vinayan",
+    "url": "https://github.com/o1x3/ergo"
+  },
+  "homepage": "https://github.com/o1x3/ergo",
+  "repository": "https://github.com/o1x3/ergo",
+  "license": "MIT",
+  "keywords": ["code-review", "ai", "mcp", "coderabbit", "cubic"],
+  "mcpServers": {
+    "ergo": {
+      "command": "ergo",
+      "args": ["mcp"]
+    }
+  }
+}

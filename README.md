@@ -240,7 +240,13 @@ ergo speaks two integration protocols:
   { "mcpServers": { "ergo": { "command": "ergo", "args": ["mcp"] } } }
   ```
 
-A ready-to-install Claude Code plugin lives in [`.claude-plugin/`](./.claude-plugin/).
+A ready-to-install **Claude Code plugin** ships in this repo (`/ergo:review`,
+`/ergo:fix` slash commands + the MCP server):
+
+```
+/plugin marketplace add o1x3/ergo
+/plugin install ergo@ergo
+```
 
 ## How ergo compares
 
