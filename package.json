@@ -1,0 +1,66 @@
+{
+  "name": "@o1x3/ergo",
+  "version": "0.1.0",
+  "description": "Ergo — a fast, local-first AI code reviewer CLI. Bring your own Codex/ChatGPT subscription or API key.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Karthik Vinayan <karthik@o1x3.com>",
+  "homepage": "https://github.com/o1x3/ergo",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/o1x3/ergo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/o1x3/ergo/issues"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "cli",
+    "coderabbit",
+    "cubic",
+    "codex",
+    "llm",
+    "static-analysis",
+    "git"
+  ],
+  "bin": {
+    "ergo": "./dist/ergo.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "scripts": {
+    "dev": "bun run src/cli/index.ts",
+    "build": "bun build ./src/cli/index.ts --outfile ./dist/ergo.js --target bun --minify",
+    "build:compile": "bun build ./src/cli/index.ts --compile --outfile ./dist/ergo",
+    "check": "biome check .",
+    "format": "biome format --write .",
+    "lint": "biome lint .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "bunx tsc --noEmit",
+    "test": "bun test",
+    "test:watch": "bun test --watch",
+    "release": "./scripts/release.sh",
+    "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^2.0.0",
+    "@ai-sdk/openai": "^2.0.0",
+    "ai": "^5.0.0",
+    "citty": "^0.1.6",
+    "picocolors": "^1.1.1",
+    "yaml": "^2.6.1",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.6",
+    "@types/bun": "^1.3.5",
+    "typescript": "^5.9.3"
+  }
+}

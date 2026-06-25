@@ -1,0 +1,40 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# bun
+.bun/
+
+# logs
+*.log
+npm-debug.log*
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# ergo local state (never commit credentials)
+.ergo/
+auth.json
+
+# test artifacts
+coverage/
+*.tmp
+
+# scratch
+scratchpad/
+tmp/
