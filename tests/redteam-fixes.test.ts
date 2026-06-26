@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
+import pc from 'picocolors';
+
 import { computeDashboard, parseStatsWindow } from '@/memory/stats';
 import type { UsageRecord } from '@/memory/usage';
 import { renderDashboard } from '@/output/dashboard';
@@ -60,6 +62,28 @@ describe('wrapText hard-breaks long tokens', () => {
     for (const line of wrapText('x'.repeat(100), 20)) {
       expect(displayWidth(line)).toBeLessThanOrEqual(20);
     }
+  });
+
+  // round-2 regression: hard-break must be ANSI-aware (no split escapes / bleed).
+  test('hard-breaks a long COLORED token without splitting escapes', () => {
+    const c = pc.createColors(true);
+    const colored = c.cyan('a'.repeat(130)); // one whitespace-free colored token
+    const lines = wrapText(colored, 20);
+    for (const line of lines) {
+      const plain = stripAnsi(line);
+      expect(plain.includes(ESC)).toBe(false); // no truncated/lone CSI survives
+      expect(plain).not.toMatch(/\[\d+m/); // no literal "[39m" leaking as text
+      expect(displayWidth(line)).toBeLessThanOrEqual(20); // full width (escapes = 0)
+    }
+    expect(lines.length).toBeGreaterThan(1);
+  });
+});
+
+// round-2 minor: absurdly large N must be rejected, not yield a NaN window.
+describe('parseStatsWindow rejects overflowing N', () => {
+  test('returns null instead of sinceMs=NaN', () => {
+    expect(parseStatsWindow('999999999999m', NOW)).toBeNull();
+    expect(parseStatsWindow('99999999999w', NOW)).toBeNull();
   });
 });
 

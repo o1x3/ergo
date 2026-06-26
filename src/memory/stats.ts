@@ -88,6 +88,9 @@ export function parseStatsWindow(
     unit === 'm'
       ? nMonthsAgoStart(now, n)
       : nDaysAgoStart(now, unit === 'w' ? n * 7 : n);
+  // An absurdly large N overflows Date math to NaN — reject rather than emit a
+  // window whose lower bound silently includes/excludes everything.
+  if (!Number.isFinite(sinceMs)) return null;
   return {
     sinceMs,
     label: `last ${n} ${noun}${n === 1 ? '' : 's'}`,

@@ -135,21 +135,37 @@ export function wrapText(s: string, width: number): string[] {
 }
 
 // Split a word with no break points into chunks of at most `width` columns.
+// ANSI-aware: copies SGR sequences through at zero width and never splits one;
+// closes any open color at a chunk boundary so it can't bleed onto the next line
+// (mirrors truncate()).
 function hardChunks(word: string, width: number): string[] {
   const chunks: string[] = [];
+  const flush = (s: string) =>
+    chunks.push(s.includes(ESC) ? `${s}${ESC}[0m` : s);
   let cur = '';
   let curW = 0;
-  for (const ch of word) {
-    const w = charWidth(ch.codePointAt(0) ?? 0);
+  let i = 0;
+  while (i < word.length) {
+    ANSI_STICKY.lastIndex = i;
+    const m = ANSI_STICKY.exec(word);
+    if (m) {
+      cur += m[0]; // copy the whole escape through, no width cost
+      i += m[0].length;
+      continue;
+    }
+    const cp = word.codePointAt(i) ?? 0;
+    const ch = String.fromCodePoint(cp);
+    const w = charWidth(cp);
     if (curW + w > width && cur !== '') {
-      chunks.push(cur);
+      flush(cur);
       cur = '';
       curW = 0;
     }
     cur += ch;
     curW += w;
+    i += ch.length;
   }
-  if (cur !== '') chunks.push(cur);
+  if (cur !== '') flush(cur);
   return chunks;
 }
 
