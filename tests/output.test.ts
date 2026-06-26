@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import type { DiffSet } from '@/git/diff';
 import { parseUnifiedDiff } from '@/git/diff';
 import { renderMarkdown } from '@/output/markdown';
+import { renderMarkdownTerminal } from '@/output/markdown-term';
 import { renderSarif } from '@/output/sarif';
 import { renderTerminal } from '@/output/terminal';
 import {
@@ -92,6 +93,85 @@ describe('renderTerminal sanitization', () => {
     expect(out.includes(CSI)).toBe(false);
     expect(out).toContain('evil');
     expect(out).toContain('RED');
+  });
+});
+
+describe('renderMarkdownTerminal', () => {
+  // Assertions are color-mode-independent: picocolors only wraps the inner text
+  // in ANSI, so the markdown *markers* are dropped whether or not color is on.
+  test('strips heading markers and inline bold/code/link markers', () => {
+    const out = renderMarkdownTerminal(
+      '## What changed\n- Updated **DEFAULT_OAUTH_PORT** in `codex.ts`\n- See [docs](http://x)',
+    );
+    expect(out).not.toMatch(/^#{1,6}\s/m); // no literal `## ` heading prefix
+    expect(out).not.toContain('**'); // bold markers gone
+    expect(out).not.toContain('`'); // inline-code backticks gone
+    expect(out).not.toContain('[docs]'); // link syntax gone
+    expect(out).toContain('What changed');
+    expect(out).toContain('•'); // bullets become •
+    expect(out).toContain('DEFAULT_OAUTH_PORT');
+    expect(out).toContain('http://x'); // link URL preserved
+  });
+
+  test('drops fence lines and keeps code content', () => {
+    const out = renderMarkdownTerminal('text\n```ts\nconst x = 1;\n```');
+    expect(out).not.toContain('```');
+    expect(out).toContain('const x = 1;');
+  });
+
+  test('a mismatched fence char inside a block does not close it early', () => {
+    // ~~~ appears inside a ```-opened block; it must be treated as code content,
+    // not a closing delimiter (CommonMark: closing fence matches the open char).
+    const out = renderMarkdownTerminal(
+      '```\nline1\n~~~ still code\nline2\n```\nafter',
+    );
+    expect(out).toContain('line1');
+    expect(out).toContain('~~~ still code'); // swallowed as code, not dropped
+    expect(out).toContain('line2');
+    expect(out).toContain('after'); // text after the real close renders normally
+    expect(out).not.toContain('```');
+  });
+
+  test('does not italicize snake_case identifiers', () => {
+    const out = renderMarkdownTerminal('the_value stays whole');
+    expect(out).toContain('the_value');
+  });
+});
+
+describe('renderTerminal walkthrough + sequence diagram', () => {
+  test('strips control chars smuggled through walkthrough markdown', () => {
+    // A model could embed control chars inside markdown (e.g. a heading) to try
+    // to ring the bell / inject a CSI. clean() must run before render. Use only
+    // control chars picocolors never emits, so this holds with color on or off
+    // (pc legitimately emits ESC for its own styling).
+    const r = review([], {
+      walkthrough: `## pwn${BELL}heading\n- item${CSI}x${NUL}`,
+    });
+    const out = renderTerminal(r);
+    expect(out.includes(BELL)).toBe(false);
+    expect(out.includes(CSI)).toBe(false);
+    expect(out.includes(NUL)).toBe(false);
+    expect(out).toContain('pwn'); // surrounding text survives
+  });
+
+  test('pretty mode renders walkthrough markdown into terminal styling', () => {
+    const r = review([], { walkthrough: '## Why\n- it **matters**' });
+    const out = renderTerminal(r);
+    expect(out).toContain('•'); // walkthrough bullet rendered
+    expect(out).toContain('it matters'); // text preserved
+    expect(out).not.toContain('**'); // bold markers stripped
+    expect(out).not.toMatch(/^#{1,6}\s/m); // heading markers stripped
+  });
+
+  test('renders the sequence diagram as a mermaid block in both modes', () => {
+    const r = review([], {
+      sequenceDiagram: 'sequenceDiagram\n  participant User',
+    });
+    for (const out of [renderTerminal(r), renderTerminal(r, { plain: true })]) {
+      expect(out).toContain('Sequence diagram');
+      expect(out).toContain('```mermaid');
+      expect(out).toContain('participant User');
+    }
   });
 });
 

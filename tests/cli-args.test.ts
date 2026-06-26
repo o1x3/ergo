@@ -17,9 +17,12 @@ describe('withDefaultCommand', () => {
   test('known commands pass through', () => {
     expect(withDefaultCommand(['auth', 'login'])).toEqual(['auth', 'login']);
     expect(withDefaultCommand(['doctor'])).toEqual(['doctor']);
+    expect(withDefaultCommand(['chat'])).toEqual(['chat']);
   });
-  test('unknown first token implies review', () => {
-    expect(withDefaultCommand(['HEAD~1'])).toEqual(['review', 'HEAD~1']);
+  test('unknown first token is left for citty to reject, NOT run as review', () => {
+    // `ergo helo` (a typo) must not silently start a token-spending review.
+    expect(withDefaultCommand(['helo'])).toEqual(['helo']);
+    expect(withDefaultCommand(['HEAD~1'])).toEqual(['HEAD~1']);
   });
   test('review findings routes to top-level findings', () => {
     expect(withDefaultCommand(['review', 'findings'])).toEqual(['findings']);
@@ -27,9 +30,12 @@ describe('withDefaultCommand', () => {
       withDefaultCommand(['review', 'findings', '--format', 'json']),
     ).toEqual(['findings', '--format', 'json']);
   });
-  test('help/version pass through', () => {
+  test('help/version words and flags route to help/version, not review', () => {
     expect(withDefaultCommand(['--help'])).toEqual(['--help']);
     expect(withDefaultCommand(['--version'])).toEqual(['--version']);
+    expect(withDefaultCommand(['help'])).toEqual(['--help']);
+    expect(withDefaultCommand(['help', 'auth'])).toEqual(['auth', '--help']);
+    expect(withDefaultCommand(['version'])).toEqual(['--version']);
   });
 });
 

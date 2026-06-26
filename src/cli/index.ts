@@ -15,6 +15,7 @@ import { modelsCommand } from '@/cli/commands/models';
 import { findingsCommand, reviewCommand } from '@/cli/commands/review';
 import { statsCommand } from '@/cli/commands/stats';
 import { updateCommand } from '@/cli/commands/update';
+import { usageCommand } from '@/cli/commands/usage';
 import { VERSION } from '@/version';
 
 const main = defineCommand({
@@ -36,6 +37,7 @@ const main = defineCommand({
     learn: learnCommand,
     models: modelsCommand,
     stats: statsCommand,
+    usage: usageCommand,
     update: updateCommand,
     mcp: mcpCommand,
     'install-hook': hookCommand,

@@ -1,6 +1,10 @@
 import { arch, platform, release } from 'node:os';
 
 import { extractAccountIdFromJwt } from '@/auth/codex';
+import {
+  parseRateLimitHeaders,
+  type RateLimitSnapshot,
+} from '@/inference/ratelimits';
 import type {
   ChatMessage,
   CompletionRequest,
@@ -33,6 +37,11 @@ export type CodexClientConfig = {
   fetchImpl?: typeof fetch;
   sleepImpl?: (ms: number) => Promise<void>;
   retry?: CodexRetryOptions;
+  // Best-effort callback fired with the rate-limit snapshot parsed from each
+  // successful response's headers. Used to persist usage limits for `ergo
+  // usage`. Kept here (not in the per-call request) so every Codex call updates
+  // it without threading through the engine.
+  onRateLimits?: (snapshot: RateLimitSnapshot) => void;
 };
 
 const DEFAULT_RETRY: Required<CodexRetryOptions> = {
@@ -368,6 +377,26 @@ export function createCodexClient(config: CodexClientConfig): ModelClient {
         throw friendlyError(response.status, text);
       }
 
+      // Rate-limit headers ride on the streaming POST response (not the SSE
+      // body). Parse them best-effort so a malformed header never breaks a
+      // review.
+      let rateLimits: RateLimitSnapshot | undefined;
+      try {
+        if (process.env.ERGO_DEBUG_RATELIMIT) {
+          for (const [k, v] of response.headers as unknown as Iterable<
+            [string, string]
+          >) {
+            if (k.toLowerCase().startsWith('x-codex')) {
+              process.stderr.write(`[ratelimit] ${k}: ${v}\n`);
+            }
+          }
+        }
+        rateLimits = parseRateLimitHeaders(response.headers);
+        if (rateLimits) config.onRateLimits?.(rateLimits);
+      } catch {
+        // ignore — usage telemetry must never break the review
+      }
+
       let text = '';
       let reasoning = '';
       let finishReason = 'stop';
@@ -462,6 +491,7 @@ export function createCodexClient(config: CodexClientConfig): ModelClient {
         reasoning: reasoning || undefined,
         usage,
         finishReason,
+        rateLimits,
       };
     },
   };

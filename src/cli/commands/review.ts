@@ -146,6 +146,13 @@ export const findingsCommand = defineCommand({
       return;
     }
     const format = normalizeFormat(args.format as string | undefined);
+    if (format === null) {
+      log.error(
+        `Invalid --format '${args.format}'. Use one of: ${OUTPUT_FORMATS.join(', ')}.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
     log.dim(`replaying review from ${cached.savedAt}`);
     emitOutput(format, cached.review, diffSetFromCache(cached), undefined);
   },
@@ -249,9 +256,16 @@ export const reviewCommand = defineCommand({
     for (const e of configErrors) log.warn(`config: ${e}`);
 
     // Effective output format: --format wins, else the configured default.
-    const format = normalizeFormat(
-      (args.format as string | undefined) ?? config.output.defaultFormat,
-    );
+    const formatInput =
+      (args.format as string | undefined) ?? config.output.defaultFormat;
+    const format = normalizeFormat(formatInput);
+    if (format === null) {
+      log.error(
+        `Invalid --format '${formatInput}'. Use one of: ${OUTPUT_FORMATS.join(', ')}.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
     const machine =
       format === 'agent' || format === 'json' || format === 'sarif';
     if (args.quiet || machine) setQuiet(true);
@@ -574,13 +588,18 @@ function emitOutput(
   }
 }
 
-function normalizeFormat(format: string | undefined): OutputFormat {
+// Resolve a user-supplied format string (with aliases) to an OutputFormat.
+// Returns null for an unrecognized value so the caller can report it — silently
+// falling back to pretty would corrupt a piped `--format json` flow on a typo.
+export function normalizeFormat(
+  format: string | undefined,
+): OutputFormat | null {
   if (!format) return 'pretty';
   const f = format.toLowerCase();
   if (f === 'ndjson') return 'agent';
   if (f === 'md') return 'markdown';
   if (OUTPUT_FORMATS.includes(f as OutputFormat)) return f as OutputFormat;
-  return 'pretty';
+  return null;
 }
 
 // Report a fatal error. In `agent` mode, emit a structured NDJSON error event so

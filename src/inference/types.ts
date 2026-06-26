@@ -56,6 +56,9 @@ export interface CompletionResult {
   reasoning?: string;
   usage?: ModelUsage;
   finishReason: string;
+  // Provider rate-limit snapshot, when the backend reports it (Codex
+  // subscription path). Undefined for providers that don't expose limits.
+  rateLimits?: import('@/inference/ratelimits').RateLimitSnapshot;
 }
 
 export interface ModelClient {

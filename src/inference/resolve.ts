@@ -11,6 +11,7 @@ import type {
   ModelClient,
   Provider,
 } from '@/inference/types';
+import { saveRateLimits } from '@/memory/ratelimits';
 
 export type ResolvedClient = {
   client: ModelClient;
@@ -52,6 +53,11 @@ export function resolveClient(opts: ResolveOptions): ResolvedClient {
       accessToken: credential.accessToken,
       accountId,
       sessionId: opts.sessionId,
+      // Persist the rate-limit snapshot from every Codex response so `ergo
+      // usage` can report remaining quota. Fire-and-forget; never blocks.
+      onRateLimits: (snapshot) => {
+        void saveRateLimits(snapshot);
+      },
     });
 
     const desired =

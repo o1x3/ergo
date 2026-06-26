@@ -24,6 +24,12 @@ export function learningsPath(env: NodeJS.ProcessEnv = process.env): string {
   return join(ergoHome(env), 'learnings.json');
 }
 
+// Latest provider rate-limit snapshot (Codex subscription 5h/weekly windows),
+// overwritten after each review so `ergo usage` can report remaining quota.
+export function rateLimitsPath(env: NodeJS.ProcessEnv = process.env): string {
+  return join(ergoHome(env), 'ratelimits.json');
+}
+
 // Per-repo state (last-reviewed commit, incremental markers) keyed by an
 // absolute repo path. Stored centrally so a clean checkout stays clean.
 export function repoStateDir(env: NodeJS.ProcessEnv = process.env): string {

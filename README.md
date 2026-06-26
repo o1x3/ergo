@@ -108,7 +108,8 @@ ergo review --base origin/main --format json --fail-on major
 | `ergo learn add` / `list` / `rm` | Teach ergo durable review preferences |
 | `ergo learn mine` | Mine the repo's review conventions from git history + guidelines |
 | `ergo models` | List available models and pricing |
-| `ergo stats` | Local usage: reviews, tokens, and cost |
+| `ergo stats [7d / 1m / …]` | Local review dashboard: counts, streaks, tokens, top models, activity heatmap (windowed) |
+| `ergo usage` | Remaining Codex subscription quota (5-hour and weekly limits) |
 | `ergo update` | Self-update to the latest release |
 | `ergo install-hook [--uninstall]` | Install a pre-push/pre-commit review gate |
 | `ergo mcp` | Run as an MCP server (review tools for Claude Code / Cursor) |

@@ -17,7 +17,11 @@ const DEVICE_ACCOUNTS_URL =
   process.env.ERGO_OPENAI_DEVICE_ACCOUNTS_URL ??
   'https://auth.openai.com/api/accounts';
 
-export const DEFAULT_OAUTH_PORT = 1456;
+// Must be 1455: ergo reuses the official Codex CLI's public OAuth client id,
+// and OpenAI's OAuth server only allows that client's pre-registered redirect
+// URI (http://localhost:1455/auth/callback). Any other port is rejected with
+// `authorize_hydra_invalid_request`.
+export const DEFAULT_OAUTH_PORT = 1455;
 
 function base64Url(buffer: Uint8Array): string {
   return Buffer.from(buffer)
