@@ -5,6 +5,7 @@ import { parseUnifiedDiff } from '@/git/diff';
 import { renderMarkdown } from '@/output/markdown';
 import { renderMarkdownTerminal } from '@/output/markdown-term';
 import { renderSarif } from '@/output/sarif';
+import { stripAnsi } from '@/output/style';
 import { renderTerminal } from '@/output/terminal';
 import {
   emptySeverityCounts,
@@ -156,7 +157,9 @@ describe('renderTerminal walkthrough + sequence diagram', () => {
 
   test('pretty mode renders walkthrough markdown into terminal styling', () => {
     const r = review([], { walkthrough: '## Why\n- it **matters**' });
-    const out = renderTerminal(r);
+    // Strip ANSI so the assertions hold whether or not color is on — with color
+    // the bold around "matters" would otherwise split the "it matters" run.
+    const out = stripAnsi(renderTerminal(r));
     expect(out).toContain('•'); // walkthrough bullet rendered
     expect(out).toContain('it matters'); // text preserved
     expect(out).not.toContain('**'); // bold markers stripped
@@ -167,7 +170,8 @@ describe('renderTerminal walkthrough + sequence diagram', () => {
     const r = review([], {
       sequenceDiagram: 'sequenceDiagram\n  participant User',
     });
-    for (const out of [renderTerminal(r), renderTerminal(r, { plain: true })]) {
+    for (const raw of [renderTerminal(r), renderTerminal(r, { plain: true })]) {
+      const out = stripAnsi(raw);
       expect(out).toContain('Sequence diagram');
       expect(out).toContain('```mermaid');
       expect(out).toContain('participant User');
