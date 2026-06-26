@@ -1,4 +1,10 @@
-import { center, displayWidth, padEnd, padStart } from '@/output/style';
+import {
+  center,
+  displayWidth,
+  padEnd,
+  padStart,
+  truncate,
+} from '@/output/style';
 import { pc } from '@/util/logger';
 
 // lipgloss-lite layout primitives — boxes, stat cards, gauges, and a GitHub-style
@@ -35,8 +41,8 @@ export function box(
 }
 
 function truncateLabel(s: string, width: number): string {
-  if (displayWidth(s) <= width) return s;
-  return `${s.slice(0, Math.max(0, width - 1))}…`;
+  // Display-width aware: never splits a surrogate pair or miscounts wide chars.
+  return truncate(s, width);
 }
 
 export interface StatCol {

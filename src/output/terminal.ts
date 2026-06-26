@@ -10,7 +10,7 @@ import {
   renderInlineMarkdown,
   renderMarkdownTerminal,
 } from '@/output/markdown-term';
-import { stripControl, wrapText } from '@/output/style';
+import { stripControl, truncate, wrapText } from '@/output/style';
 import type { ReviewFinding, ReviewResult, Severity } from '@/review/schema';
 import { pc } from '@/util/logger';
 
@@ -69,7 +69,10 @@ export function renderTerminal(
     for (const f of summary.fileSummaries) {
       out.push(
         margin(
-          `${pc.cyan(clean(f.path))} ${pc.dim('—')} ${renderInlineMarkdown(clean(f.summary))}`,
+          truncate(
+            `${pc.cyan(clean(f.path))} ${pc.dim('—')} ${renderInlineMarkdown(clean(f.summary))}`,
+            W,
+          ),
         ),
       );
     }
@@ -125,10 +128,13 @@ export function renderTerminal(
     .join(', ');
   out.push(
     margin(
-      pc.dim(
-        `${stats.filesReviewed} file(s) reviewed · +${stats.additions}/-${stats.deletions}` +
-          (sevCounts ? ` · ${sevCounts}` : '') +
-          (stats.filesSkipped ? ` · ${stats.filesSkipped} skipped` : ''),
+      truncate(
+        pc.dim(
+          `${stats.filesReviewed} file(s) reviewed · +${stats.additions}/-${stats.deletions}` +
+            (sevCounts ? ` · ${sevCounts}` : '') +
+            (stats.filesSkipped ? ` · ${stats.filesSkipped} skipped` : ''),
+        ),
+        W,
       ),
     ),
   );
@@ -139,8 +145,11 @@ export function renderTerminal(
       : 'n/a';
   out.push(
     margin(
-      pc.dim(
-        `model ${stats.model} (${stats.provider}) · ${stats.tokensInput}→${stats.tokensOutput} tok · ${cost} · ${(stats.durationMs / 1000).toFixed(1)}s`,
+      truncate(
+        pc.dim(
+          `model ${stripControl(stats.model)} (${stats.provider}) · ${stats.tokensInput}→${stats.tokensOutput} tok · ${cost} · ${(stats.durationMs / 1000).toFixed(1)}s`,
+        ),
+        W,
       ),
     ),
   );
@@ -170,7 +179,12 @@ function renderFinding(f: ReviewFinding, sevWordW: number): string[] {
   const word = f.severity.toUpperCase();
   const chipStr =
     chip(word, tone) + ' '.repeat(Math.max(0, sevWordW - word.length));
-  lines.push(`  ${sevGlyph(tone)}  ${chipStr} ${pc.bold(clean(f.title))}`);
+  // Title budget = canvas minus the glyph + chip gutter, so long titles
+  // truncate instead of overflowing the line.
+  const titleBudget = Math.max(20, W - 6 - sevWordW);
+  lines.push(
+    `  ${sevGlyph(tone)}  ${chipStr} ${pc.bold(truncate(clean(f.title), titleBudget))}`,
+  );
 
   for (const l of wrapText(clean(f.description), W - 5))
     lines.push(`     ${l}`);
@@ -189,12 +203,16 @@ function renderFinding(f: ReviewFinding, sevWordW: number): string[] {
       `${pc.dim('conf')} ${confMeter(f.confidence)} ${pc.dim(f.confidence.toFixed(2))}`,
     );
   }
-  lines.push(`     ${meta.join(pc.dim(' · '))}`);
+  lines.push(`     ${truncate(meta.join(pc.dim(' · ')), W - 5)}`);
 
   if (f.suggestedPatch?.trim()) {
+    const patch = clean(f.suggestedPatch.trimEnd());
+    // Only +/- color a real unified diff; plain replacement code (YAML lists,
+    // markdown) starts lines with `-` too and must NOT render as deletions.
+    const isDiff = /^@@|^(diff |--- |\+\+\+ )/m.test(patch);
     lines.push(`     ${pc.dim('suggested fix')}`);
-    for (const l of clean(f.suggestedPatch.trimEnd()).split('\n')) {
-      lines.push(`       ${diffColor(l)}`);
+    for (const l of patch.split('\n')) {
+      lines.push(`       ${isDiff ? diffColor(l) : pc.dim(l)}`);
     }
   }
   return lines;

@@ -5,12 +5,21 @@ import {
 } from '@/inference/ratelimits';
 import { relativeTime, resetsIn } from '@/output/format';
 import { gauge, rule } from '@/output/layout';
-import { displayWidth, fit } from '@/output/style';
+import { displayWidth, fit, stripControl, truncate } from '@/output/style';
 import { pc } from '@/util/logger';
 
 const W = 70;
 const LABEL_W = 13;
 const BAR_W = 40;
+
+// The plan type comes from a network header (`x-codex-plan-type`) and is
+// persisted, so sanitize it before it ever reaches the terminal: strip control /
+// escape sequences and cap the length so it can't inject or blow out the width.
+function safePlan(planType: string | undefined): string | undefined {
+  if (!planType) return undefined;
+  const cleaned = stripControl(planType).trim();
+  return cleaned ? truncate(cleaned, 24, '') : undefined;
+}
 
 // Render the Codex usage view: a labeled gauge per rate-limit window with used%,
 // reset time, and remaining %. `now` is injected for testability.
@@ -34,8 +43,9 @@ export function renderUsage(
     return out.join('\n');
   }
 
+  const plan = safePlan(snapshot.planType);
   const noteParts = [
-    snapshot.planType ? `${snapshot.planType} plan` : '',
+    plan ? `${plan} plan` : '',
     `as of ${relativeTime(snapshot.capturedAt, now)}`,
   ].filter(Boolean);
   const note = pc.dim(noteParts.join(' · '));
@@ -50,9 +60,7 @@ export function renderUsage(
   }
 
   out.push('');
-  out.push(
-    `  ${pc.dim(fit('credits', LABEL_W))} ${pc.dim(creditsText(snapshot))}`,
-  );
+  out.push(`  ${pc.dim(fit('credits', LABEL_W))} ${pc.dim(creditsText(plan))}`);
   out.push('');
   return out.join('\n');
 }
@@ -81,10 +89,8 @@ function subLine(win: RateLimitWindow, now: number): string {
   return rightAlign(left, remaining, W);
 }
 
-function creditsText(snapshot: RateLimitSnapshot): string {
-  return snapshot.planType
-    ? `included with ${snapshot.planType}`
-    : 'included with your subscription';
+function creditsText(plan: string | undefined): string {
+  return plan ? `included with ${plan}` : 'included with your subscription';
 }
 
 function padStartPlain(s: string, width: number): string {

@@ -91,10 +91,11 @@ export function renderDashboard(
     );
     out.push('');
     const max = Math.max(...models.map((m) => m.reviews));
+    const countW = Math.max(3, String(max).length); // fits ≥1000 without raggedness
     for (const m of models) {
       const name = pc.cyan(fit(stripControl(m.name), MODEL_NAME_W));
       const bar = hbar(m.reviews / max, MODEL_BAR_W);
-      out.push(`  ${name}  ${bar}  ${padStart(String(m.reviews), 3)}`);
+      out.push(`  ${name}  ${bar}  ${padStart(String(m.reviews), countW)}`);
     }
   }
 
@@ -237,14 +238,13 @@ const REFERENCES = [
 ];
 
 // "You've burned ~N× the tokens in <book>." Picks the largest reference the
-// total exceeds, so the multiplier reads naturally (≥ ~1×).
+// total *exceeds*, so the multiplier always reads ≥ 1× (no "~0.7×").
 function funComparison(totalTokens: number): string | undefined {
-  if (totalTokens < 1_000) return undefined;
-  let ref = REFERENCES[0];
+  let ref: (typeof REFERENCES)[number] | undefined;
   for (const r of REFERENCES) {
     if (totalTokens >= r.tokens) ref = r;
   }
-  if (!ref) return undefined;
+  if (!ref) return undefined; // below the smallest reference — skip the line
   const mult = totalTokens / ref.tokens;
   const m = mult >= 10 ? Math.round(mult) : mult.toFixed(1);
   return `You've burned ~${m}× the tokens in ${ref.name}.`;

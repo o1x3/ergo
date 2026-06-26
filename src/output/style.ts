@@ -23,7 +23,14 @@ export function stripControl(s: string): string {
       (c < 0x20 && c !== 0x09 && c !== 0x0a) ||
       c === 0x7f ||
       (c >= 0x80 && c <= 0x9f);
-    if (!isControl) out += ch;
+    // Bidi / RTL-override format chars enable Trojan-Source spoofing — strip too.
+    const isBidi =
+      c === 0x200e ||
+      c === 0x200f ||
+      c === 0x061c ||
+      (c >= 0x202a && c <= 0x202e) ||
+      (c >= 0x2066 && c <= 0x2069);
+    if (!isControl && !isBidi) out += ch;
   }
   return out;
 }
@@ -101,6 +108,19 @@ export function wrapText(s: string, width: number): string[] {
     }
     let line = '';
     for (const word of para.split(/\s+/).filter(Boolean)) {
+      // Hard-break a single word that can't fit (long path / URL / token) so it
+      // never overflows the canvas.
+      if (displayWidth(word) > width) {
+        if (line !== '') {
+          out.push(line);
+          line = '';
+        }
+        const chunks = hardChunks(word, width);
+        for (let k = 0; k < chunks.length - 1; k++)
+          out.push(chunks[k] as string);
+        line = chunks[chunks.length - 1] ?? '';
+        continue;
+      }
       if (line === '') line = word;
       else if (displayWidth(line) + 1 + displayWidth(word) <= width)
         line += ` ${word}`;
@@ -112,6 +132,25 @@ export function wrapText(s: string, width: number): string[] {
     if (line !== '') out.push(line);
   }
   return out;
+}
+
+// Split a word with no break points into chunks of at most `width` columns.
+function hardChunks(word: string, width: number): string[] {
+  const chunks: string[] = [];
+  let cur = '';
+  let curW = 0;
+  for (const ch of word) {
+    const w = charWidth(ch.codePointAt(0) ?? 0);
+    if (curW + w > width && cur !== '') {
+      chunks.push(cur);
+      cur = '';
+      curW = 0;
+    }
+    cur += ch;
+    curW += w;
+  }
+  if (cur !== '') chunks.push(cur);
+  return chunks;
 }
 
 // Truncate to `width` visible columns, preserving ANSI sequences (copied through
@@ -138,5 +177,8 @@ export function truncate(s: string, width: number, ellipsis = '…'): string {
     used += w;
     i += ch.length;
   }
-  return `${out}${ellipsis}`;
+  // If we cut mid-string after copying color codes, close them so the color
+  // doesn't bleed into whatever follows the truncated cell.
+  const reset = out.includes(ESC) ? `${ESC}[0m` : '';
+  return `${out}${reset}${ellipsis}`;
 }

@@ -48,11 +48,23 @@ function nDaysAgoStart(now: number, days: number): number {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
-// Start-of-day (local) ms for `n` calendar months before `now`.
+// Start-of-day (local) ms for `n` calendar months before `now`. Clamps the
+// day to the target month's length so month-ends don't overflow forward (the
+// classic `setMonth` bug: May 31 − 1mo must be Apr 30, not May 1).
 function nMonthsAgoStart(now: number, months: number): number {
-  const d = new Date(now);
-  d.setMonth(d.getMonth() - months);
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const ref = new Date(now);
+  const day = ref.getDate();
+  const target = new Date(ref.getFullYear(), ref.getMonth() - months, 1);
+  const lastDay = new Date(
+    target.getFullYear(),
+    target.getMonth() + 1,
+    0,
+  ).getDate();
+  return new Date(
+    target.getFullYear(),
+    target.getMonth(),
+    Math.min(day, lastDay),
+  ).getTime();
 }
 
 // Parse a window arg: undefined/"all" → all-time; N followed by d(ays)/w(eeks)
