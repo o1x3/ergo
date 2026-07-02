@@ -50,10 +50,10 @@
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^2.0.0",
-    "@ai-sdk/openai": "^2.0.0",
+    "@ai-sdk/anthropic": "^4.0.5",
+    "@ai-sdk/openai": "^4.0.5",
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "ai": "^5.0.0",
+    "ai": "^7.0.11",
     "citty": "^0.1.6",
     "picocolors": "^1.1.1",
     "yaml": "^2.6.1",
