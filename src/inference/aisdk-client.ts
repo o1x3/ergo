@@ -1,10 +1,11 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import {
-  generateObject,
+  generateText,
   jsonSchema,
   type LanguageModel,
   type ModelMessage,
+  Output,
   streamText,
 } from 'ai';
 
@@ -79,22 +80,24 @@ export function createAiSdkClient(config: AiSdkClientConfig): ModelClient {
           .filter((m) => m.role === 'system')
           .map((m) => m.content),
       ].filter((s): s is string => Boolean(s));
-      const system = systemParts.join('\n\n') || undefined;
+      // ai v7 renamed the top-level `system` option to `instructions`.
+      const instructions = systemParts.join('\n\n') || undefined;
       const messages = toModelMessages(req.messages);
 
       // Structured output: use the SDK's native object generation, which routes
       // through provider-side JSON schema / tool calling for high reliability.
+      // (`generateObject` is deprecated in ai v7 in favor of this form.)
       if (req.jsonSchema) {
-        const result = await generateObject({
+        const result = await generateText({
           model,
-          system,
+          instructions,
           messages,
-          schema: jsonSchema(req.jsonSchema),
+          output: Output.object({ schema: jsonSchema(req.jsonSchema) }),
           temperature: req.temperature,
           maxOutputTokens: req.maxOutputTokens,
           abortSignal: req.signal,
         });
-        const text = JSON.stringify(result.object);
+        const text = JSON.stringify(result.output);
         req.onTextDelta?.(text);
         return {
           text,
@@ -105,7 +108,7 @@ export function createAiSdkClient(config: AiSdkClientConfig): ModelClient {
 
       const result = streamText({
         model,
-        system,
+        instructions,
         messages,
         temperature: req.temperature,
         maxOutputTokens: req.maxOutputTokens,

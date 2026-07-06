@@ -43,7 +43,7 @@ import {
   type Severity,
 } from '@/review/schema';
 import { serializeDiffSet } from '@/review/serialize';
-import { log, setQuiet } from '@/util/logger';
+import { log, setColorMode, setQuiet } from '@/util/logger';
 
 function resolveTarget(args: Record<string, unknown>): ReviewTarget {
   const commit = args.commit as string | undefined;
@@ -254,6 +254,7 @@ export const reviewCommand = defineCommand({
 
     const { config, errors: configErrors } = await loadConfig(root);
     for (const e of configErrors) log.warn(`config: ${e}`);
+    setColorMode(config.output.color);
 
     // Effective output format: --format wins, else the configured default.
     const formatInput =
@@ -271,7 +272,10 @@ export const reviewCommand = defineCommand({
     if (args.quiet || machine) setQuiet(true);
 
     // Validate --fail-on early so a typo can't silently disable a CI gate.
-    const failOn = args['fail-on'] as Severity | undefined;
+    // Case-insensitive: `--fail-on Major` means major.
+    const failOn = (args['fail-on'] as string | undefined)?.toLowerCase() as
+      | Severity
+      | undefined;
     if (failOn !== undefined && !SEVERITIES.includes(failOn)) {
       log.error(
         `Invalid --fail-on '${failOn}'. Use one of: ${SEVERITIES.join(', ')}.`,
@@ -340,15 +344,48 @@ export const reviewCommand = defineCommand({
       return;
     }
 
+    // Normalize `./src/x.ts` → `src/x.ts` so --files matches git's paths.
     const onlyFiles = (args.files as string | undefined)
       ?.split(',')
-      .map((s) => s.trim())
+      .map((s) => s.trim().replace(/^\.\//, ''))
       .filter(Boolean);
     const { diff: filtered, skippedByFilter } = applyFileFilters(
       diff,
       config,
       onlyFiles,
     );
+    // Emit a well-formed "nothing reviewed" result for every format, so machine
+    // consumers (json/sarif pipelines) never receive an empty stream.
+    const emitNothingReviewed = (diffForContext: DiffSet, note: string) => {
+      const emptyReview: ReviewResult = {
+        summary: emptySummary(),
+        findings: [],
+        stats: emptyStats(resolved),
+      };
+      if (format === 'agent') {
+        const emitter = new AgentEmitter();
+        emitter.reviewContext(diffForContext, root);
+        emitter.complete(emptyReview.stats);
+      } else if (format === 'pretty' || format === 'plain') {
+        // Human formats: a short message is friendlier than an empty report.
+        log.info(note);
+      } else {
+        emitOutput(format, emptyReview, diffForContext, undefined);
+      }
+    };
+
+    // reviews.ignore.max_changed_lines: skip the review entirely when the
+    // changeset is bigger than the configured cap (0 = no cap).
+    const maxLines = config.reviews.maxChangedLines;
+    const changedLines = filtered.totalAdditions + filtered.totalDeletions;
+    if (maxLines > 0 && changedLines > maxLines) {
+      log.warn(
+        `Skipping review: ${changedLines} changed line(s) exceeds reviews.ignore.max_changed_lines (${maxLines}).`,
+      );
+      emitNothingReviewed({ ...filtered, files: [] }, 'Review skipped.');
+      return;
+    }
+
     const limit = isDeep
       ? config.reviews.ultraFileLimit
       : config.reviews.fileLimit;
@@ -363,23 +400,7 @@ export const reviewCommand = defineCommand({
     }
 
     if (finalDiff.files.length === 0) {
-      const emptyReview: ReviewResult = {
-        summary: emptySummary(),
-        findings: [],
-        stats: emptyStats(resolved),
-      };
-      if (format === 'agent') {
-        const emitter = new AgentEmitter();
-        emitter.reviewContext(finalDiff, root);
-        emitter.complete(emptyReview.stats);
-      } else if (format === 'pretty' || format === 'plain') {
-        // Human formats: a short message is friendlier than an empty report.
-        log.info('No changes to review.');
-      } else {
-        // Machine formats (json/sarif/markdown) must emit a well-formed empty
-        // document so downstream consumers (e.g. SARIF upload) don't choke.
-        emitOutput(format, emptyReview, finalDiff, undefined);
-      }
+      emitNothingReviewed(finalDiff, 'No changes to review.');
       return;
     }
 
@@ -505,6 +526,12 @@ export const reviewCommand = defineCommand({
         };
         const label = labels[event.phase];
         if (label) log.step(label);
+        return;
+      }
+      // A failed findings batch means PARTIAL coverage — never let it pass
+      // silently as a clean review.
+      if (event.type === 'tool_skipped') {
+        log.error(`review batch failed (results are partial): ${event.reason}`);
       }
     };
 
@@ -515,6 +542,7 @@ export const reviewCommand = defineCommand({
         resolved,
         promptContext,
         generateSummary: !args['no-summary'] && config.reviews.highLevelSummary,
+        temperature: config.model.temperature,
         reasoningEffort: isDeep
           ? 'high'
           : isFast

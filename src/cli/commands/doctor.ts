@@ -49,7 +49,17 @@ export const doctorCommand = defineCommand({
     });
 
     // auth
-    const envCred = resolveCredentialFromEnv();
+    let envCred: ReturnType<typeof resolveCredentialFromEnv>;
+    try {
+      envCred = resolveCredentialFromEnv();
+    } catch (err) {
+      checks.push({
+        ok: false,
+        label: 'auth',
+        detail: err instanceof Error ? err.message : String(err),
+      });
+      hardFail = true;
+    }
     const stored = await loadCredential(authFilePath());
     const cred = envCred ?? stored;
     if (cred) {

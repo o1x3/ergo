@@ -48,6 +48,8 @@ export type RunReviewOptions = {
   generateSummary?: boolean;
   perBatchChars?: number;
   maxConcurrency?: number;
+  // Overrides the built-in pass temperatures (findings 0.1, summary 0.2).
+  temperature?: number;
   reasoningEffort?: ReasoningEffortLevel;
   onEvent?: (event: ReviewEvent) => void;
   signal?: AbortSignal;
@@ -187,7 +189,7 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
         jsonSchema: FINDINGS_JSON_SCHEMA,
         system: sysFindings,
         messages: [{ role: 'user', content: user }],
-        temperature: 0.1,
+        temperature: opts.temperature ?? 0.1,
         reasoningEffort: opts.reasoningEffort,
         signal: opts.signal,
       });
@@ -229,7 +231,7 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
             content: summaryUserPrompt(diff, text, promptContext),
           },
         ],
-        temperature: 0.2,
+        temperature: opts.temperature ?? 0.2,
         reasoningEffort: opts.reasoningEffort,
         signal: opts.signal,
       });

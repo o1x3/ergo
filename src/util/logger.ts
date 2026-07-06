@@ -9,6 +9,14 @@ export function setQuiet(value: boolean): void {
   quiet = value;
 }
 
+// Apply the config's `output.color` (always | never | auto). Every module
+// imports `pc` from here, so swapping the formatter set in place affects all
+// rendering. `auto` keeps picocolors' own tty/NO_COLOR detection.
+export function setColorMode(mode: 'auto' | 'always' | 'never'): void {
+  if (mode === 'auto') return;
+  Object.assign(pc, pc.createColors(mode === 'always'));
+}
+
 function write(line: string): void {
   if (!quiet) process.stderr.write(`${line}\n`);
 }

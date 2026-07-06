@@ -196,7 +196,20 @@ async function exchangeCode(
     );
   }
 
-  const payload = (await response.json()) as TokenPayload;
+  let payload: TokenPayload;
+  try {
+    payload = (await response.json()) as TokenPayload;
+  } catch {
+    throw new Error(
+      'OAuth token exchange returned a malformed (non-JSON) response. Try again.',
+    );
+  }
+  if (!payload.access_token) {
+    // Never persist a credential that can't authenticate anything.
+    throw new Error(
+      'OAuth token exchange returned no access_token. Re-run `ergo auth login`.',
+    );
+  }
   const apiKey = await exchangeForApiKey(payload.id_token ?? '');
 
   return {
@@ -292,6 +305,9 @@ export async function loginWithBrowser(
         }
         try {
           stdin.off('data', onStdinData);
+          // Attaching a 'data' listener switched stdin to flowing mode, which
+          // keeps the event loop alive; pause it back so the process can exit.
+          (stdin as { pause?: () => void }).pause?.();
         } catch {
           // ignore
         }
@@ -436,18 +452,35 @@ async function requestDeviceCode(): Promise<DeviceCode> {
     interval?: string;
   };
 
+  // Clamp the poll interval: a missing/zero/NaN value must not hot-loop the
+  // token endpoint, and a huge one must not stall the login.
+  const parsedInterval = Number.parseInt(payload.interval ?? '5', 10);
+  const interval = Number.isFinite(parsedInterval)
+    ? Math.min(60, Math.max(1, parsedInterval))
+    : 5;
+
   return {
     verificationUrl: `${new URL(DEVICE_ACCOUNTS_URL).origin}/codex/device`,
     userCode: payload.user_code,
     deviceAuthId: payload.device_auth_id,
-    interval: Number.parseInt(payload.interval ?? '5', 10),
+    interval,
   };
 }
+
+// Give up polling after this long; device codes expire server-side and the
+// backend keeps answering 403/404 for them, which would otherwise loop forever.
+const DEVICE_POLL_DEADLINE_MS = 15 * 60 * 1000;
 
 async function pollDeviceCode(
   deviceCode: DeviceCode,
 ): Promise<{ authorizationCode: string; codeVerifier: string }> {
+  const deadline = Date.now() + DEVICE_POLL_DEADLINE_MS;
   while (true) {
+    if (Date.now() > deadline) {
+      throw new Error(
+        'Device-code login timed out (code not authorized within 15 minutes). Re-run `ergo auth login --device`.',
+      );
+    }
     let response: Response;
     try {
       response = await fetch(`${DEVICE_ACCOUNTS_URL}/deviceauth/token`, {
@@ -522,7 +555,14 @@ export async function refreshOAuthCredential(
     );
   }
 
-  const payload = (await response.json()) as TokenPayload;
+  let payload: TokenPayload;
+  try {
+    payload = (await response.json()) as TokenPayload;
+  } catch {
+    throw new Error(
+      'OAuth token refresh returned a malformed (non-JSON) response. Try again.',
+    );
+  }
   if (!payload.access_token) {
     throw new Error('OAuth token refresh returned no access_token');
   }

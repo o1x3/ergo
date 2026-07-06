@@ -168,6 +168,7 @@ export const fixCommand = defineCommand({
         (a, b) => b.startLine - a.startLine || b.endLine - a.endLine,
       );
       let lowestTouched = Number.POSITIVE_INFINITY;
+      let appliedAny = false;
       for (const f of ordered) {
         if (f.endLine >= lowestTouched) {
           results.push({
@@ -195,9 +196,12 @@ export const fixCommand = defineCommand({
         }
         content = next;
         lowestTouched = f.startLine;
+        appliedAny = true;
         results.push({ id: f.id, file, ok: true });
       }
-      await writeFile(path, content, 'utf8');
+      // Only touch the file when something actually applied — a no-op rewrite
+      // would still bump mtime and re-trigger watchers/builds.
+      if (appliedAny) await writeFile(path, content, 'utf8');
     }
 
     const applied = results.filter((r) => r.ok);

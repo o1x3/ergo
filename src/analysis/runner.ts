@@ -103,6 +103,27 @@ export async function runStaticAnalysis(
         cwd: opts.repoRoot,
         timeoutMs: TOOL_TIMEOUT_MS,
       });
+      // A usage error means the installed CLI doesn't speak these flags
+      // (version drift). Retry the legacy invocation once, and if that also
+      // fails, record the tool as skipped rather than pretending it ran.
+      if (looksLikeUsageError(out)) {
+        const alt = tool.altArgs?.(
+          applicable.map((f) => f.path),
+          ctx,
+        );
+        out = alt
+          ? await exec([tool.bin, ...alt], {
+              cwd: opts.repoRoot,
+              timeoutMs: TOOL_TIMEOUT_MS,
+            })
+          : out;
+        if (looksLikeUsageError(out)) {
+          const reason = `incompatible CLI version (${firstLine(out.stderr)})`;
+          result.skipped.push({ name: tool.name, reason });
+          opts.onSkip?.(tool.name, reason);
+          continue;
+        }
+      }
     } catch (err) {
       result.skipped.push({
         name: tool.name,
@@ -120,10 +141,13 @@ export async function runStaticAnalysis(
       } catch {
         parsed = [];
       }
+      const rootPrefix = opts.repoRoot.endsWith('/')
+        ? opts.repoRoot
+        : `${opts.repoRoot}/`;
       for (const f of parsed) {
         // Normalize absolute paths back to repo-relative when possible.
-        const rel = f.file.startsWith(opts.repoRoot)
-          ? f.file.slice(opts.repoRoot.length).replace(/^\/+/, '')
+        const rel = f.file.startsWith(rootPrefix)
+          ? f.file.slice(rootPrefix.length)
           : f.file;
         if (!fileByPath.has(rel)) continue;
         if (!lineIsChanged(changedRanges.get(rel) ?? [], f.line)) continue;
@@ -143,6 +167,22 @@ export async function runStaticAnalysis(
 
   result.groundingText = renderGrounding(result.findings, textBlocks);
   return result;
+}
+
+// Heuristic: the CLI rejected our arguments (wrong version), as opposed to a
+// normal "findings exist" non-zero exit.
+function looksLikeUsageError(out: {
+  exitCode: number;
+  stderr: string;
+}): boolean {
+  if (out.exitCode === 0) return false;
+  return /unknown (?:flag|shorthand flag|command|option)|unrecognized option|unknown output format/i.test(
+    out.stderr,
+  );
+}
+
+function firstLine(s: string): string {
+  return s.trim().split('\n')[0]?.slice(0, 200) ?? '';
 }
 
 function renderGrounding(

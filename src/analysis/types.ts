@@ -31,6 +31,9 @@ export interface ToolSpec {
   applies(file: { path: string; language: string }): boolean;
   // Build the argv (after `bin`) for the applicable files. Return null to skip.
   buildArgs(files: string[], ctx: ToolRunContext): string[] | null;
+  // Fallback argv for older CLI versions, tried when the primary args fail
+  // with a usage error (unknown flag/command) — e.g. golangci-lint v1 vs v2.
+  altArgs?(files: string[], ctx: ToolRunContext): string[] | null;
   // Parse output to findings. If omitted, raw output is surfaced as text only.
   parse?(out: ToolOutput, ctx: ToolRunContext): StaticFinding[];
   // Config files that, if present, are auto-discovered and passed along.

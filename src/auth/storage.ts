@@ -57,13 +57,28 @@ export async function clearCredential(authFile: string): Promise<void> {
 // Environment variables short-circuit stored credentials so CI can run ergo
 // without an interactive login. Precedence: ERGO_API_KEY (provider-agnostic) >
 // provider-specific keys > stored credential.
+const KNOWN_PROVIDERS: ReadonlySet<string> = new Set([
+  'codex',
+  'openai',
+  'anthropic',
+  'openai-compatible',
+]);
+
 export function resolveCredentialFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): CredentialRecord | undefined {
   const now = new Date().toISOString();
   const generic = env.ERGO_API_KEY?.trim();
   if (generic) {
-    const provider = (env.ERGO_PROVIDER?.trim() as Provider) || 'openai';
+    const rawProvider = env.ERGO_PROVIDER?.trim();
+    // A typo'd provider must fail loudly, not silently route the key to the
+    // wrong backend (or crash later with `undefined` model lookups).
+    if (rawProvider && !KNOWN_PROVIDERS.has(rawProvider)) {
+      throw new Error(
+        `Unknown ERGO_PROVIDER '${rawProvider}'. Use one of: ${[...KNOWN_PROVIDERS].join(', ')}.`,
+      );
+    }
+    const provider = (rawProvider as Provider) || 'openai';
     return {
       provider,
       type: 'api-key',

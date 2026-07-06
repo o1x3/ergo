@@ -157,9 +157,14 @@ export const chatCommand = defineCommand({
           currentAbort = null;
         }
         history.push({ role: 'assistant', content: answer });
-        // Trim oldest turns so a long session doesn't grow unbounded.
+        // Trim oldest turns so a long session doesn't grow unbounded. Keep the
+        // window starting on a user turn — Anthropic rejects a leading
+        // assistant message.
         if (history.length > MAX_HISTORY) {
           history.splice(0, history.length - MAX_HISTORY);
+          while (history.length > 0 && history[0]?.role !== 'user') {
+            history.shift();
+          }
         }
         process.stdout.write('\n\n');
       }

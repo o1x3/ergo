@@ -120,6 +120,11 @@ const mineCommand = defineCommand({
       .map((s) => s.trim())
       .filter(Boolean);
     const limit = args.commits ? Number(args.commits) : 200;
+    if (!Number.isInteger(limit) || limit <= 0) {
+      log.error(`Invalid --commits '${args.commits}'. Use a positive integer.`);
+      process.exitCode = 1;
+      return;
+    }
     log.step('Mining commit history and guidelines…');
     const [history, guidelines] = await Promise.all([
       recentLog({ limit, authors, cwd: repoRootDir }),

@@ -31,7 +31,7 @@ export const DEFAULT_MODELS: Record<Provider, string> = {
 export const FAST_MODELS: Record<Provider, string> = {
   codex: 'gpt-5.4-mini',
   openai: 'gpt-5.4-mini',
-  anthropic: 'claude-haiku-4-5-20251001',
+  anthropic: 'claude-haiku-4-5',
   'openai-compatible': 'gpt-5.4-mini',
 };
 
@@ -56,8 +56,12 @@ export const PRICING: Record<string, ModelPricing> = {
   'gpt-5-mini': { input: 0.25, output: 2, cacheRead: 0.025 },
   'gpt-5-nano': { input: 0.05, output: 0.4, cacheRead: 0.005 },
   'gpt-4.1-mini': { input: 0.4, output: 1.6, cacheRead: 0.1 },
+  'claude-fable-5': { input: 10, output: 50, cacheRead: 1 },
   'claude-opus-4-8': { input: 5, output: 25, cacheRead: 0.5 },
+  'claude-opus-4-7': { input: 5, output: 25, cacheRead: 0.5 },
+  'claude-sonnet-5': { input: 3, output: 15, cacheRead: 0.3 },
   'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3 },
+  'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1 },
   'claude-haiku-4-5-20251001': { input: 1, output: 5, cacheRead: 0.1 },
 };
 

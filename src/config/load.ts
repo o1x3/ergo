@@ -32,14 +32,29 @@ function deepMerge<T>(base: T, override: Partial<T>): T {
   return out as T;
 }
 
+type YamlReadResult =
+  | { data: unknown; path: string; error?: undefined }
+  | { data?: undefined; path: string; error: string };
+
+// Missing file → undefined. A file that EXISTS but fails to parse must surface
+// an error — silently ignoring a typo'd .ergo.yaml would drop the user's whole
+// config without a word.
 async function readYamlIfExists(
   path: string,
-): Promise<{ data: unknown; path: string } | undefined> {
+): Promise<YamlReadResult | undefined> {
+  let raw: string;
   try {
-    const raw = await readFile(path, 'utf8');
-    return { data: parseYaml(raw) ?? {}, path };
+    raw = await readFile(path, 'utf8');
   } catch {
     return undefined;
+  }
+  try {
+    return { data: parseYaml(raw) ?? {}, path };
+  } catch (err) {
+    return {
+      path,
+      error: `invalid YAML: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
 }
 
@@ -69,17 +84,25 @@ export async function loadConfig(
   const errors: string[] = [];
   let merged: ErgoConfig = {};
 
+  const apply = (found: YamlReadResult): void => {
+    if (found.error !== undefined) {
+      errors.push(`${found.path}: ${found.error}`);
+      return;
+    }
+    const parsed = ergoConfigSchema.safeParse(found.data);
+    if (parsed.success) {
+      merged = deepMerge(merged, parsed.data);
+      sources.push(found.path);
+    } else {
+      errors.push(`${found.path}: ${parsed.error.issues[0]?.message}`);
+    }
+  };
+
   // Global first (lowest precedence).
   for (const candidate of globalConfigCandidates(env)) {
     const found = await readYamlIfExists(candidate);
     if (found) {
-      const parsed = ergoConfigSchema.safeParse(found.data);
-      if (parsed.success) {
-        merged = deepMerge(merged, parsed.data);
-        sources.push(found.path);
-      } else {
-        errors.push(`${found.path}: ${parsed.error.issues[0]?.message}`);
-      }
+      apply(found);
       break;
     }
   }
@@ -88,13 +111,7 @@ export async function loadConfig(
   for (const name of REPO_CONFIG_NAMES) {
     const found = await readYamlIfExists(join(repoRoot, name));
     if (found) {
-      const parsed = ergoConfigSchema.safeParse(found.data);
-      if (parsed.success) {
-        merged = deepMerge(merged, parsed.data);
-        sources.push(found.path);
-      } else {
-        errors.push(`${found.path}: ${parsed.error.issues[0]?.message}`);
-      }
+      apply(found);
       break;
     }
   }

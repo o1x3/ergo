@@ -106,25 +106,34 @@ export async function fetchCodexWithRetry(
 
   let response: Response | undefined;
   for (let attempt = 1; attempt <= cfg.maxAttempts; attempt++) {
-    response = await fetchImpl(url, init);
-    if (response.ok) return response;
-    if (!isRetryableStatus(response.status) || attempt === cfg.maxAttempts) {
-      return response;
+    let headerWait: number | null = null;
+    try {
+      response = await fetchImpl(url, init);
+      if (response.ok) return response;
+      if (!isRetryableStatus(response.status) || attempt === cfg.maxAttempts) {
+        return response;
+      }
+      headerWait = parseRetryAfter(response.headers.get('retry-after'));
+      if (response.body) {
+        try {
+          await response.body.cancel();
+        } catch {
+          // ignore
+        }
+      }
+    } catch (err) {
+      // Transient network failures (connection reset, DNS blip) are as
+      // retryable as a 5xx — but a user abort must propagate immediately.
+      if (err instanceof Error && err.name === 'AbortError') throw err;
+      if (attempt === cfg.maxAttempts) throw err;
+      response = undefined;
     }
-    const headerWait = parseRetryAfter(response.headers.get('retry-after'));
     const exp = Math.min(cfg.maxDelayMs, cfg.baseDelayMs * 2 ** (attempt - 1));
     // Cap the server-provided Retry-After too, so a hostile/huge header can't
     // stall us indefinitely.
     const wait =
       headerWait !== null ? Math.min(cfg.maxDelayMs, headerWait) : exp;
     const jitter = random() * wait * cfg.jitterRatio;
-    if (response.body) {
-      try {
-        await response.body.cancel();
-      } catch {
-        // ignore
-      }
-    }
     await sleep(wait + jitter, options.signal);
   }
   return response as Response;

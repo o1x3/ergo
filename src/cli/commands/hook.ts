@@ -107,7 +107,9 @@ export const hookCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
-    const failOn = (args['fail-on'] as string | undefined) ?? 'major';
+    const failOn = (
+      (args['fail-on'] as string | undefined) ?? 'major'
+    ).toLowerCase();
     if (!SEVERITIES.includes(failOn as Severity)) {
       log.error(
         `Invalid --fail-on '${failOn}'. Use one of: ${SEVERITIES.join(', ')}.`,

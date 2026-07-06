@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 
+import { log } from '@/util/logger';
+
 const MAX_INSTRUCTION_BYTES = 40_000;
 
 // Read one or more instruction files (CodeRabbit's `-c/--config`/ergo's
@@ -26,7 +28,9 @@ export async function readInstructionFiles(
       parts.push(block);
       total += block.length;
     } catch {
-      // skip unreadable instruction files silently; not fatal
+      // Not fatal, but the user explicitly asked for this file — a silent skip
+      // would hide a typo'd --instructions path.
+      log.warn(`--instructions: could not read ${file}; skipping.`);
     }
   }
   return parts.length > 0 ? parts.join('\n\n') : undefined;

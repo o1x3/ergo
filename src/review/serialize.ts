@@ -8,9 +8,6 @@ export function renderFileDiff(file: FileDiff): string {
   if (file.binary) {
     return `${head}\n[binary file — not shown]`;
   }
-  if (file.oldPath && file.oldPath !== file.path) {
-    // renamed/copied
-  }
   const lines: string[] = [head];
   if (file.oldPath && file.oldPath !== file.path) {
     lines.push(`(was: ${file.oldPath})`);

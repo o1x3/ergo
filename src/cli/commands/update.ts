@@ -10,7 +10,11 @@ async function latestVersion(): Promise<string | undefined> {
   try {
     const res = await fetch(
       `https://api.github.com/repos/${REPO}/releases/latest`,
-      { headers: { accept: 'application/vnd.github+json' } },
+      {
+        headers: { accept: 'application/vnd.github+json' },
+        // Don't hang `ergo update` forever on a stalled connection.
+        signal: AbortSignal.timeout(10_000),
+      },
     );
     if (!res.ok) return undefined;
     const data = (await res.json()) as { tag_name?: string };

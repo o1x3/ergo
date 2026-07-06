@@ -84,9 +84,14 @@ export function gatherCustomAgents(
   const paths = diff.files.map((f) => f.path);
   const lines: string[] = [];
   for (const agent of enabled) {
-    const applies =
-      !agent.include ||
-      paths.some((p) => (agent.include ?? []).some((g) => matchSimple(p, g)));
+    // The agent applies when at least one changed file is in scope: matching
+    // `include` (or no include list) and not matching `exclude`.
+    const applies = paths.some((p) => {
+      const included =
+        !agent.include || agent.include.some((g) => matchSimple(p, g));
+      const excluded = (agent.exclude ?? []).some((g) => matchSimple(p, g));
+      return included && !excluded;
+    });
     if (!applies) continue;
     lines.push(`- [${agent.name}] ${agent.instructions}`);
   }

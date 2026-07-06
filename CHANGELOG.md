@@ -4,6 +4,55 @@ All notable changes to ergo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and ergo adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- **Non-ASCII filenames survive diff collection.** Git octal-escapes and quotes
+  non-ASCII paths by default (`"caf\303\251.ts"`), which the diff parser
+  couldn't match — such files surfaced with an empty path and dodged filters
+  and limits. Diffs now run with `core.quotePath=false`.
+- **Partial review coverage is no longer silent.** A failed findings batch now
+  prints an error in human output (it was only visible in `--format agent`),
+  so a review where some batches failed can't masquerade as a clean pass.
+- Device-code login can no longer poll forever: expired codes time out after
+  15 minutes, and a missing/zero/huge server poll interval is clamped to 1–60s
+  instead of hot-looping the token endpoint.
+- OAuth token exchange validates `access_token` presence and JSON shape before
+  persisting, so a malformed response can't save an unusable credential; the
+  browser-login stdin listener is paused on completion so the process exits.
+- Transient network errors (connection reset, DNS blips) during Codex requests
+  are retried with the same backoff as 429/5xx instead of failing the review.
+- A missing executable (e.g. no `git`) reports exit 127 with a clear message
+  instead of an unhandled `Bun.spawn` stack trace.
+- Malformed YAML in `.ergo.yaml` is reported as a config error instead of the
+  whole file being silently ignored.
+- An invalid `ERGO_PROVIDER` env value fails loudly instead of silently
+  routing the API key to OpenAI; `ergo doctor` reports it as a failed check.
+- Config options that were parsed but silently ignored now work:
+  `reviews.ignore.max_changed_lines` (skips oversized changesets),
+  `model.temperature` (overrides both review passes), `output.color`
+  (always/never), and custom agents' `exclude` + `file_paths` scoping.
+- `--fail-on` and `install-hook --fail-on` are case-insensitive; `--files`
+  accepts `./`-prefixed paths; `learn mine --commits` validates its argument;
+  `--instructions` warns on unreadable files instead of skipping silently;
+  `ergo update` no longer hangs on a stalled release-feed connection.
+- `ergo fix` no longer rewrites files when every candidate fix was rejected
+  (a no-op write bumped mtime and re-triggered watchers); `ergo chat` history
+  trimming can no longer produce an Anthropic-rejected leading assistant turn.
+- Static-analysis runner detects incompatible tool CLI versions (usage errors)
+  and retries a legacy invocation instead of pretending the tool ran:
+  gitleaks uses `dir` (v8.19+) with `detect --no-git` fallback; golangci-lint
+  uses v2 `--output.json.path` with v1 `--out-format` fallback.
+
+### Changed
+- Dependencies: `ai` 5→7 (`generateObject`/`system` migrated to
+  `generateText` + `Output.object` / `instructions`), `@ai-sdk/openai` and
+  `@ai-sdk/anthropic` 2→4, `citty` 0.1→0.2, TypeScript 5.9→6.0 (dropped the
+  deprecated `baseUrl`), Biome config migrated to 2.5.2.
+- Model tables refreshed: added `claude-sonnet-5`, `claude-fable-5`,
+  `claude-opus-4-7`, and the bare `claude-haiku-4-5` alias to pricing; the
+  Anthropic fast model now uses the `claude-haiku-4-5` alias.
+
 ## [0.2.0] - 2026-06-26
 
 ### Added

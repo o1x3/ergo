@@ -284,7 +284,17 @@ const gitleaks: ToolSpec = {
   bin: 'gitleaks',
   category: 'secrets',
   applies: () => true,
+  // v8.19+ replaced `detect --no-git` with the `dir` command; older versions
+  // don't know `dir`, so the legacy invocation rides in altArgs.
   buildArgs: (_files, ctx) => [
+    'dir',
+    ctx.repoRoot,
+    '--report-format',
+    'json',
+    '--report-path',
+    '/dev/stdout',
+  ],
+  altArgs: (_files, ctx) => [
     'detect',
     '--no-git',
     '--report-format',
@@ -321,7 +331,12 @@ const golangciLint: ToolSpec = {
   bin: 'golangci-lint',
   category: 'lint',
   applies: byLang('go'),
+  // v2 renamed --out-format to --output.json.path; v1 syntax lives in altArgs.
   buildArgs: (_files, ctx) => {
+    const cfg = ctx.configFile ? ['-c', ctx.configFile] : [];
+    return ['run', '--output.json.path', 'stdout', ...cfg];
+  },
+  altArgs: (_files, ctx) => {
     const cfg = ctx.configFile ? ['-c', ctx.configFile] : [];
     return ['run', '--out-format', 'json', ...cfg];
   },

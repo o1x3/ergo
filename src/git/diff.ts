@@ -304,7 +304,17 @@ async function untrackedFileDiff(
   // Use git's own no-index diff so binary detection and large-file handling
   // match everything else. It exits 1 when files differ (expected).
   const { stdout } = await exec(
-    ['git', 'diff', '--no-index', '--no-color', '--', '/dev/null', path],
+    [
+      'git',
+      '-c',
+      'core.quotePath=false',
+      'diff',
+      '--no-index',
+      '--no-color',
+      '--',
+      '/dev/null',
+      path,
+    ],
     { cwd: root },
   );
   const parsed = parseUnifiedDiff(stdout);
@@ -330,7 +340,18 @@ export async function collectDiff(
 ): Promise<DiffSet> {
   const cwd = options.cwd;
   const ctx = options.contextLines ?? 3;
-  const diffArgs = ['diff', '--no-color', `--unified=${ctx}`, '-M', '-C'];
+  // core.quotePath=false: git otherwise octal-escapes and quotes non-ASCII
+  // paths (`"caf\303\251.ts"`), which the unified-diff parser can't match —
+  // the file would surface with an empty path and dodge filters/limits.
+  const diffArgs = [
+    '-c',
+    'core.quotePath=false',
+    'diff',
+    '--no-color',
+    `--unified=${ctx}`,
+    '-M',
+    '-C',
+  ];
 
   let raw = '';
   let base: string | undefined;

@@ -156,6 +156,7 @@ export interface ResolvedConfig {
     deep?: string;
     baseUrl?: string;
     maxBudgetUsd: number;
+    temperature?: number;
     reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
   };
   reviews: {
@@ -243,6 +244,7 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
       deep: config.model?.deep,
       baseUrl: config.model?.base_url ?? config.model?.self_hosted_url,
       maxBudgetUsd: config.model?.max_budget_usd ?? 0,
+      temperature: config.model?.temperature,
       reasoningEffort: config.model?.reasoning_effort,
     },
     reviews: {
@@ -260,7 +262,12 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
       maxChangedLines: reviews.ignore?.max_changed_lines ?? 0,
       honorLinguistGenerated: reviews.ignore?.honor_linguist_generated ?? true,
       tools: reviews.tools ?? {},
-      customAgents: reviews.custom_agents ?? [],
+      // `file_paths` is the cubic-style spelling of `include`; fold it in so
+      // both forms actually scope the agent.
+      customAgents: (reviews.custom_agents ?? []).map((a) => ({
+        ...a,
+        include: a.include ?? a.file_paths,
+      })),
     },
     knowledgeBase: {
       optOut: kb.opt_out ?? false,

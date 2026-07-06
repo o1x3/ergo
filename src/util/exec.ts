@@ -15,17 +15,33 @@ export type ExecOptions = {
 // Thin wrapper over Bun.spawn that captures stdout/stderr as text and never
 // throws on a non-zero exit (callers inspect exitCode). Used for git and the
 // bundled static-analysis tools.
-export async function exec(
-  cmd: string[],
-  options: ExecOptions = {},
-): Promise<ExecResult> {
-  const proc = Bun.spawn(cmd, {
+function spawnPiped(cmd: string[], options: ExecOptions) {
+  return Bun.spawn(cmd, {
     cwd: options.cwd,
     env: options.env ? { ...process.env, ...options.env } : process.env,
     stdin: options.input ? new TextEncoder().encode(options.input) : 'ignore',
     stdout: 'pipe',
     stderr: 'pipe',
   });
+}
+
+export async function exec(
+  cmd: string[],
+  options: ExecOptions = {},
+): Promise<ExecResult> {
+  let proc: ReturnType<typeof spawnPiped>;
+  try {
+    proc = spawnPiped(cmd, options);
+  } catch (err) {
+    // Bun.spawn throws synchronously when the executable doesn't exist (or the
+    // cwd is gone). Surface that like a shell would (exit 127) so callers keep
+    // their normal exit-code handling instead of an unhandled stack trace.
+    return {
+      stdout: '',
+      stderr: `[ergo] failed to run ${cmd[0]}: ${err instanceof Error ? err.message : String(err)}`,
+      exitCode: 127,
+    };
+  }
 
   let timedOut = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
