@@ -53,10 +53,12 @@ const eslint: ToolSpec = {
   bin: 'eslint',
   category: 'lint',
   applies: byLang('javascript', 'typescript', 'jsx', 'tsx'),
-  buildArgs: (files) => [
+  // level: 'error' maps to --quiet (report errors only).
+  buildArgs: (files, ctx) => [
     '-f',
     'json',
     '--no-error-on-unmatched-pattern',
+    ...(ctx.level === 'error' ? ['--quiet'] : []),
     ...files,
   ],
   parse: (out) => {
@@ -93,13 +95,22 @@ const eslint: ToolSpec = {
   },
 };
 
+const SHELLCHECK_LEVELS = new Set(['error', 'warning', 'info', 'style']);
+
 // ---- shellcheck (shell) ----
 const shellcheck: ToolSpec = {
   name: 'shellcheck',
   bin: 'shellcheck',
   category: 'lint',
   applies: byLang('shell'),
-  buildArgs: (files) => ['-f', 'json', ...files],
+  buildArgs: (files, ctx) => [
+    '-f',
+    'json',
+    ...(typeof ctx.level === 'string' && SHELLCHECK_LEVELS.has(ctx.level)
+      ? ['-S', ctx.level]
+      : []),
+    ...files,
+  ],
   parse: (out) => {
     const rows = safeJson<
       Array<{
@@ -150,7 +161,17 @@ const semgrep: ToolSpec = {
     const cfg = ctx.configFile
       ? ['--config', ctx.configFile]
       : ['--config', 'auto'];
-    return [...cfg, '--json', '--quiet', '--no-git-ignore', ...files];
+    // semgrep's --severity is an exact-match filter (repeatable), while our
+    // `level` means "minimum severity" — expand it cumulatively.
+    const level =
+      typeof ctx.level === 'string' ? ctx.level.toUpperCase() : undefined;
+    const sev =
+      level === 'ERROR'
+        ? ['--severity', 'ERROR']
+        : level === 'WARNING'
+          ? ['--severity', 'WARNING', '--severity', 'ERROR']
+          : [];
+    return [...cfg, ...sev, '--json', '--quiet', '--no-git-ignore', ...files];
   },
   parse: (out) => {
     const data = safeJson<{
@@ -283,6 +304,7 @@ const gitleaks: ToolSpec = {
   name: 'gitleaks',
   bin: 'gitleaks',
   category: 'secrets',
+  serial: true,
   applies: () => true,
   // v8.19+ replaced `detect --no-git` with the `dir` command; older versions
   // don't know `dir`, so the legacy invocation rides in altArgs.
@@ -330,6 +352,7 @@ const golangciLint: ToolSpec = {
   name: 'golangci-lint',
   bin: 'golangci-lint',
   category: 'lint',
+  serial: true,
   applies: byLang('go'),
   // v2 renamed --out-format to --output.json.path; v1 syntax lives in altArgs.
   buildArgs: (_files, ctx) => {
@@ -497,10 +520,13 @@ const TEXT_TOOLS: ToolSpec[] = [
     byLang('markdown'),
     (files) => [...files],
   ),
-  textTool('clippy', 'cargo-clippy', 'lint', byLang('rust'), () => [
-    '--message-format',
-    'short',
-  ]),
+  {
+    ...textTool('clippy', 'cargo-clippy', 'lint', byLang('rust'), () => [
+      '--message-format',
+      'short',
+    ]),
+    serial: true,
+  },
 ];
 
 export const ALL_TOOLS: ToolSpec[] = [

@@ -25,6 +25,7 @@ import {
   summaryResultSchema,
 } from '@/review/schema';
 import { renderFileDiff, serializeDiffSet } from '@/review/serialize';
+import { mapLimit } from '@/util/concurrency';
 
 export type ReviewEvent =
   | { type: 'status'; phase: ReviewPhase; detail?: string }
@@ -41,6 +42,10 @@ export type ReviewPhase =
 
 export type RunReviewOptions = {
   diff: DiffSet;
+  // Diff for the summary pass when it should cover more than `diff` (e.g.
+  // incremental reviews send only fresh files as `diff` but the summary must
+  // still describe the whole changeset). Defaults to `diff`.
+  summaryDiff?: DiffSet;
   resolved: ResolvedClient;
   promptContext: PromptContext;
   // Filtering / shaping
@@ -103,26 +108,6 @@ function combineUsage(
   };
 }
 
-async function mapLimit<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  // Always run at least one worker; a misconfigured concurrency <= 0 must not
-  // silently process zero items.
-  const workerCount = Math.max(1, Math.min(limit, items.length));
-  const workers = Array.from({ length: workerCount }, async () => {
-    while (cursor < items.length) {
-      const i = cursor++;
-      results[i] = await fn(items[i] as T, i);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 // Clamp a finding's line range to the file's real new-line bounds and dedupe.
 function normalizeFinding(
   f: Finding,
@@ -177,6 +162,7 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
   const sysFindings = findingsSystemPrompt(promptContext);
   const rawFindings: Finding[] = [];
   let failedBatches = 0;
+  const unreviewedFiles: string[] = [];
   await mapLimit(batches, concurrency, async (batch) => {
     const batchDiff: DiffSet = { ...diff, files: batch };
     const text = batch.map(renderFileDiff).join('\n\n');
@@ -199,6 +185,9 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
       // A user abort should still cancel the whole review.
       if (err instanceof Error && err.name === 'AbortError') throw err;
       failedBatches += 1;
+      // The model never saw these files — record it so callers can surface
+      // the coverage gap and keep them out of the incremental cache.
+      for (const f of batch) unreviewedFiles.push(f.path);
       emit({
         type: 'tool_skipped',
         name: 'findings-batch',
@@ -214,10 +203,11 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
   }
 
   // Summary pass (parallelizable but cheap; run after to reuse the same client).
+  const summaryDiff = opts.summaryDiff ?? diff;
   let summary: SummaryResult;
   if (opts.generateSummary !== false) {
     emit({ type: 'status', phase: 'summarizing' });
-    const text = serializeDiffSet(diff, { maxChars: perBatch }).text;
+    const text = serializeDiffSet(summaryDiff, { maxChars: perBatch }).text;
     try {
       const result = await completeStructured({
         client: resolved.client,
@@ -228,7 +218,7 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
         messages: [
           {
             role: 'user',
-            content: summaryUserPrompt(diff, text, promptContext),
+            content: summaryUserPrompt(summaryDiff, text, promptContext),
           },
         ],
         temperature: opts.temperature ?? 0.2,
@@ -239,10 +229,10 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
       summary = result.value;
       emit({ type: 'summary', summary });
     } catch {
-      summary = fallbackSummary(diff);
+      summary = fallbackSummary(summaryDiff);
     }
   } else {
-    summary = fallbackSummary(diff);
+    summary = fallbackSummary(summaryDiff);
   }
 
   // Post-process findings: normalize, confidence/path filter, dedupe, sort.
@@ -278,8 +268,9 @@ export async function runReview(opts: RunReviewOptions): Promise<ReviewResult> {
   for (const f of findings) findingsBySeverity[f.severity as Severity] += 1;
 
   const stats: ReviewStats = {
-    filesReviewed: reviewable.length,
+    filesReviewed: reviewable.length - unreviewedFiles.length,
     filesSkipped: diff.files.length - reviewable.length,
+    unreviewedFiles: unreviewedFiles.length > 0 ? unreviewedFiles : undefined,
     additions: diff.totalAdditions,
     deletions: diff.totalDeletions,
     findingsBySeverity,

@@ -45,7 +45,7 @@ if [ -z "$version" ]; then
     | grep -o '"tag_name": *"[^"]*"' | head -n1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
 fi
 if [ -z "$version" ]; then
-  red "could not determine the latest version; set ERGO_VERSION (e.g. v0.1.0)"
+  red "could not determine the latest version; set ERGO_VERSION (e.g. v0.2.0)"
   exit 1
 fi
 

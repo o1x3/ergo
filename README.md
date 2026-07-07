@@ -37,8 +37,9 @@ ChatGPT.
 - 🧪 **Grounded in real tools.** Runs your installed linters/SAST (ruff, eslint,
   semgrep, shellcheck, gitleaks, hadolint, mypy…) on the diff and feeds their
   findings to the model to verify, dedupe, and prioritize — fewer false positives.
-- 🤖 **Scriptable.** Pretty TUI, plain text, JSON, **CodeRabbit-compatible NDJSON
-  `--agent` stream**, **SARIF** for GitHub code scanning, and markdown reports.
+- 🤖 **Scriptable.** Pretty TUI, plain text, JSON, a **CodeRabbit-compatible
+  NDJSON stream** (`--format agent`), **SARIF** for GitHub code scanning, and
+  markdown reports.
 - 📈 **Cost-transparent.** Every review prints tokens used and the exact $ cost
   (or "subscription — no API cost").
 
@@ -129,12 +130,24 @@ ergo review --base origin/main --format json --fail-on major
 | `--format <fmt>` | `pretty` · `plain` · `json` · `agent` · `sarif` · `markdown` |
 | `-m, --model <id>` | Override the model |
 | `--profile <p>` | `chill` (fewer nits) · `assertive` (thorough) |
-| `--light` / `--deep` | Cheaper/faster triage model · strongest model + higher effort |
+| `--light` / `--deep` | Cheaper/faster triage model · strongest model + higher effort (aliases: `--fast` / `--ultra`) |
 | `--min-confidence <0-1>` | Drop findings below this confidence |
+| `--full` | Force a full review (skip incremental reuse of unchanged files) |
 | `--fail-on <severity>` | Exit non-zero if any finding ≥ severity (CI gating) |
 | `--budget <usd>` | Abort before running if the estimated API cost would exceed this |
 | `--no-static` | Skip static-analysis grounding |
+| `--no-summary` | Skip the summary pass |
 | `-q, --quiet` | Suppress progress output |
+
+### Incremental reviews
+
+Repeat runs are cheap: ergo hashes each file's rendered diff, and files that are
+byte-identical to the last review **carry their findings forward** instead of
+being re-reviewed — an unchanged changeset replays instantly with zero API
+spend. Reuse only happens under the same model, profile, and an equal-or-looser
+confidence filter, and is disabled when you pass `--prompt`/`--instructions`
+(a new focus should see the whole diff). Opt out per run with `--full`, or
+permanently with `reviews.incremental: false`.
 
 ### Output formats
 
@@ -175,12 +188,17 @@ version: 1
 language: en-US
 
 reviews:
+  enabled: true               # false = per-repo opt-out (skips without a credential)
   profile: chill              # chill | assertive
   min_confidence: 0.6         # drop low-confidence findings (false-positive control)
+  incremental: true           # reuse findings for files whose diff didn't change
   sequence_diagrams: true
   path_filters:               # CodeRabbit-style include/exclude globs
     - "!**/*.lock"
     - "!dist/**"
+  ignore:
+    head_branches: ["wip/**"] # skip reviews on matching branches
+    max_changed_lines: 0      # skip changesets bigger than this (0 = no cap)
   path_instructions:
     - path: "src/**/*.ts"
       instructions: "Enforce strict null handling; avoid `any`."
@@ -190,7 +208,7 @@ reviews:
       include: ["**/*.ts"]
   tools:
     eslint: { enabled: true }
-    semgrep: { enabled: true }
+    semgrep: { enabled: true, level: warning }  # level = minimum severity
     gitleaks: { enabled: true }
 
 knowledge_base:
@@ -233,7 +251,7 @@ Use `--fail-on major` to block merges on serious findings. ergo ships a ready
 
 ergo speaks two integration protocols:
 
-- **NDJSON agent stream** — `ergo review --agent` emits one JSON event per line
+- **NDJSON agent stream** — `ergo review --format agent` emits one JSON event per line
   (a superset of CodeRabbit's protocol). Wire it into Claude Code, Cursor, Kiro,
   Codex CLI, or any agent that consumes streamed findings.
 - **MCP server** — `ergo mcp` exposes `ergo_review`, `ergo_findings`,

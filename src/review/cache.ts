@@ -3,7 +3,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { DiffSet, ReviewTarget } from '@/git/diff';
+import type { ReviewProfile } from '@/review/prompts';
 import type { ReviewResult } from '@/review/schema';
+import { renderFileDiff } from '@/review/serialize';
 import { ergoHome } from '@/util/paths';
 
 // A persisted review, so `ergo review findings` can replay the last result and
@@ -26,6 +28,18 @@ export interface CachedReview {
     // sha256 of each file's content at review time, so `ergo fix` can detect a
     // file that changed since the review and refuse to apply a stale patch.
     fileHashes: Record<string, string>;
+    // sha256 of each file's RENDERED DIFF at review time. If a file's rendered
+    // diff is byte-identical on the next run, the model input for that file is
+    // identical, so its findings can be reused (incremental reviews).
+    diffHashes?: Record<string, string>;
+    // Review knobs the findings were produced under; incremental reuse is only
+    // sound when they are compatible with the current run.
+    profile?: ReviewProfile;
+    minConfidence?: number;
+    // Hash of every non-diff input that shapes findings (guidelines, learnings,
+    // path instructions, custom agents, per-run focus, tone, language,
+    // reasoning effort). Reuse requires an exact match.
+    promptFingerprint?: string;
   };
   review: ReviewResult;
 }
@@ -53,10 +67,24 @@ export async function hashFile(
   }
 }
 
+// Per-file hash of the rendered diff — the exact text the model reviews.
+export function computeDiffHashes(
+  files: DiffSet['files'],
+): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const f of files) hashes[f.path] = hashContent(renderFileDiff(f));
+  return hashes;
+}
+
 export async function saveReviewCache(
   repoRoot: string,
   diff: DiffSet,
   review: ReviewResult,
+  meta: {
+    profile?: ReviewProfile;
+    minConfidence?: number;
+    promptFingerprint?: string;
+  } = {},
 ): Promise<void> {
   const path = cachePath(repoRoot);
   await mkdir(dirname(path), { recursive: true });
@@ -67,6 +95,11 @@ export async function saveReviewCache(
       if (h) fileHashes[f.path] = h;
     }),
   );
+  // Never record a diff hash for a file whose findings batch failed — the
+  // model didn't review it, and a recorded hash would let the next incremental
+  // run carry forward "no findings" for coverage that never existed.
+  const diffHashes = computeDiffHashes(diff.files);
+  for (const p of review.stats.unreviewedFiles ?? []) delete diffHashes[p];
   const payload: CachedReview = {
     version: 1,
     savedAt: new Date().toISOString(),
@@ -83,6 +116,10 @@ export async function saveReviewCache(
         language: f.language,
       })),
       fileHashes,
+      diffHashes,
+      profile: meta.profile,
+      minConfidence: meta.minConfidence,
+      promptFingerprint: meta.promptFingerprint,
     },
     review,
   };

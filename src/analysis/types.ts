@@ -38,6 +38,10 @@ export interface ToolSpec {
   parse?(out: ToolOutput, ctx: ToolRunContext): StaticFinding[];
   // Config files that, if present, are auto-discovered and passed along.
   configFiles?: string[];
+  // Whole-repo scanners (gitleaks, golangci-lint, cargo clippy) run serially,
+  // after the per-file tools — concurrent repo-wide scans contend on locks and
+  // can observe sibling tools' transient files.
+  serial?: boolean;
   // Run once over the whole set (true) vs per-file batching is handled upstream.
   category: 'lint' | 'security' | 'type' | 'secrets' | 'iac' | 'prose';
 }

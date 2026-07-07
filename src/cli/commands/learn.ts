@@ -112,7 +112,7 @@ const mineCommand = defineCommand({
     }
     const resolved = resolveClient({
       credential,
-      modelOverride: args.model as string | undefined,
+      modelOverride: (args.model as string | undefined) ?? config.model.default,
     });
 
     const authors = (args.reviewers as string | undefined)

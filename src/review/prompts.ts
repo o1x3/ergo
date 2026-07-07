@@ -15,6 +15,9 @@ export type PromptContext = {
   staticFindings?: string;
   language?: string; // ISO locale for output, e.g. en-US
   toneInstructions?: string;
+  // reviews.sequence_diagrams — when false, the summary pass is told not to
+  // produce a Mermaid diagram (saves output tokens, honors the config).
+  sequenceDiagrams?: boolean;
 };
 
 const SEVERITY_RUBRIC = `Severity ladder (use precisely):
@@ -62,7 +65,9 @@ export function summarySystemPrompt(ctx: PromptContext): string {
   return [
     'You are ergo, summarizing a code changeset for a reviewer.',
     'Produce a precise, non-fluffy high-level summary, a sectioned markdown walkthrough, a one-line summary per changed file, an effort estimate (1-5), and a merge-confidence score (1-5).',
-    'If the change has a meaningful runtime flow (request handling, async sequence, state machine), include a small Mermaid sequence diagram in sequenceDiagram; otherwise leave it empty.',
+    ctx.sequenceDiagrams === false
+      ? 'Leave sequenceDiagram empty — diagrams are disabled for this repo.'
+      : 'If the change has a meaningful runtime flow (request handling, async sequence, state machine), include a small Mermaid sequence diagram in sequenceDiagram; otherwise leave it empty.',
     ctx.language && ctx.language !== 'en-US'
       ? `Write all prose in locale ${ctx.language}.`
       : '',

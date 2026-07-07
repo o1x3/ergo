@@ -1,6 +1,7 @@
 import { ALL_TOOLS } from '@/analysis/tools';
 import type { StaticFinding, ToolSpec } from '@/analysis/types';
 import type { DiffSet, FileDiff } from '@/git/diff';
+import { mapLimit } from '@/util/concurrency';
 import { commandExists, exec } from '@/util/exec';
 
 export type ToolToggle = {
@@ -17,6 +18,7 @@ export type AnalysisResult = {
 };
 
 const TOOL_TIMEOUT_MS = 60_000;
+const TOOL_CONCURRENCY = 4;
 const MAX_GROUNDING_FINDINGS = 80;
 const MAX_TEXT_OUTPUT_CHARS = 4_000;
 
@@ -71,19 +73,24 @@ export async function runStaticAnalysis(
   const fileByPath = new Map(diff.files.map((f) => [f.path, f]));
   const changedRanges = new Map<string, Array<[number, number]>>();
   for (const f of diff.files) changedRanges.set(f.path, changedLineRanges(f));
-  const textBlocks: string[] = [];
 
-  for (const tool of ALL_TOOLS) {
-    if (!isEnabled(tool, toggles)) continue;
+  // One outcome per tool; tools run concurrently (independent processes) and
+  // the outcomes are assembled in ALL_TOOLS order so output is deterministic.
+  type ToolOutcome =
+    | { kind: 'inapplicable' }
+    | { kind: 'skipped'; reason: string }
+    | { kind: 'findings'; findings: StaticFinding[] }
+    | { kind: 'text'; block?: string };
+
+  const runTool = async (tool: ToolSpec): Promise<ToolOutcome> => {
+    if (!isEnabled(tool, toggles)) return { kind: 'inapplicable' };
     const applicable = diff.files.filter(
       (f) => !f.binary && tool.applies({ path: f.path, language: f.language }),
     );
-    if (applicable.length === 0) continue;
+    if (applicable.length === 0) return { kind: 'inapplicable' };
 
     if (!(await commandExists(tool.bin))) {
-      result.skipped.push({ name: tool.name, reason: 'not installed' });
-      opts.onSkip?.(tool.name, 'not installed');
-      continue;
+      return { kind: 'skipped', reason: 'not installed' };
     }
 
     const ctx = {
@@ -95,7 +102,7 @@ export async function runStaticAnalysis(
       applicable.map((f) => f.path),
       ctx,
     );
-    if (!args) continue;
+    if (!args) return { kind: 'inapplicable' };
 
     let out: Awaited<ReturnType<typeof exec>>;
     try {
@@ -118,21 +125,27 @@ export async function runStaticAnalysis(
             })
           : out;
         if (looksLikeUsageError(out)) {
-          const reason = `incompatible CLI version (${firstLine(out.stderr)})`;
-          result.skipped.push({ name: tool.name, reason });
-          opts.onSkip?.(tool.name, reason);
-          continue;
+          return {
+            kind: 'skipped',
+            reason: `incompatible CLI version (${firstLine(out.stderr)})`,
+          };
         }
       }
     } catch (err) {
-      result.skipped.push({
-        name: tool.name,
+      return {
+        kind: 'skipped',
         reason: err instanceof Error ? err.message : 'failed to run',
-      });
-      continue;
+      };
     }
 
-    result.ran.push(tool.name);
+    // A timed-out tool produced partial (or no) output — reporting it as
+    // "ran" would silently drop its findings.
+    if (out.exitCode === 124) {
+      return {
+        kind: 'skipped',
+        reason: `timed out after ${TOOL_TIMEOUT_MS / 1000}s`,
+      };
+    }
 
     if (tool.parse) {
       let parsed: StaticFinding[] = [];
@@ -144,6 +157,7 @@ export async function runStaticAnalysis(
       const rootPrefix = opts.repoRoot.endsWith('/')
         ? opts.repoRoot
         : `${opts.repoRoot}/`;
+      const findings: StaticFinding[] = [];
       for (const f of parsed) {
         // Normalize absolute paths back to repo-relative when possible.
         const rel = f.file.startsWith(rootPrefix)
@@ -151,17 +165,60 @@ export async function runStaticAnalysis(
           : f.file;
         if (!fileByPath.has(rel)) continue;
         if (!lineIsChanged(changedRanges.get(rel) ?? [], f.line)) continue;
-        result.findings.push({ ...f, file: rel });
+        findings.push({ ...f, file: rel });
       }
-    } else {
-      // Text-only tool: surface its raw output (capped) as grounding so the
-      // model can weigh it, even without a structured parser.
-      const raw = `${out.stdout}\n${out.stderr}`.trim();
-      if (raw && out.exitCode !== 0) {
-        textBlocks.push(
-          `### ${tool.name}\n${raw.slice(0, MAX_TEXT_OUTPUT_CHARS)}`,
-        );
-      }
+      return { kind: 'findings', findings };
+    }
+
+    // Text-only tool: surface its raw output (capped) as grounding so the
+    // model can weigh it, even without a structured parser.
+    const raw = `${out.stdout}\n${out.stderr}`.trim();
+    return {
+      kind: 'text',
+      block:
+        raw && out.exitCode !== 0
+          ? `### ${tool.name}\n${raw.slice(0, MAX_TEXT_OUTPUT_CHARS)}`
+          : undefined,
+    };
+  };
+
+  // Per-file linters run concurrently; whole-repo scanners (tool.serial) run
+  // one at a time afterwards so they never observe sibling tools' transient
+  // state or contend on repo-wide locks.
+  const outcomes: ToolOutcome[] = new Array(ALL_TOOLS.length);
+  const concurrentIdx = ALL_TOOLS.flatMap((t, i) => (t.serial ? [] : [i]));
+  const serialIdx = ALL_TOOLS.flatMap((t, i) => (t.serial ? [i] : []));
+  const concurrentOutcomes = await mapLimit(
+    concurrentIdx,
+    TOOL_CONCURRENCY,
+    (i) => runTool(ALL_TOOLS[i] as ToolSpec),
+  );
+  concurrentIdx.forEach((toolIdx, k) => {
+    outcomes[toolIdx] = concurrentOutcomes[k] as ToolOutcome;
+  });
+  for (const i of serialIdx) {
+    outcomes[i] = await runTool(ALL_TOOLS[i] as ToolSpec);
+  }
+
+  const textBlocks: string[] = [];
+  for (let i = 0; i < ALL_TOOLS.length; i++) {
+    const tool = ALL_TOOLS[i] as ToolSpec;
+    const outcome = outcomes[i] as ToolOutcome;
+    switch (outcome.kind) {
+      case 'inapplicable':
+        break;
+      case 'skipped':
+        result.skipped.push({ name: tool.name, reason: outcome.reason });
+        opts.onSkip?.(tool.name, outcome.reason);
+        break;
+      case 'findings':
+        result.ran.push(tool.name);
+        result.findings.push(...outcome.findings);
+        break;
+      case 'text':
+        result.ran.push(tool.name);
+        if (outcome.block) textBlocks.push(outcome.block);
+        break;
     }
   }
 

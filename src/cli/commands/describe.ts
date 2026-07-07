@@ -4,6 +4,7 @@ import { defineCommand } from 'citty';
 import { z } from 'zod';
 
 import { getActiveCredential } from '@/auth/resolve';
+import { loadConfig } from '@/config/load';
 import { collectDiff, type ReviewTarget } from '@/git/diff';
 import { isGitRepo, repoRoot } from '@/git/repo';
 import { resolveClient } from '@/inference/resolve';
@@ -67,9 +68,10 @@ export const describeCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
+    const { config } = await loadConfig(root);
     const resolved = resolveClient({
       credential,
-      modelOverride: args.model as string | undefined,
+      modelOverride: (args.model as string | undefined) ?? config.model.default,
     });
 
     log.step('Generating description…');

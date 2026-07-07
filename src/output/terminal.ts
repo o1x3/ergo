@@ -122,6 +122,13 @@ export function renderTerminal(
   // Footer / stats
   out.push('');
   out.push(margin(rule(W)));
+  if (stats.unreviewedFiles?.length) {
+    for (const l of wrapText(
+      `⚠ partial coverage: ${stats.unreviewedFiles.length} file(s) not reviewed (batch failures): ${stats.unreviewedFiles.map(clean).join(', ')}`,
+      W,
+    ))
+      out.push(margin(pc.red(l)));
+  }
   const sevCounts = Object.entries(stats.findingsBySeverity)
     .filter(([, n]) => n > 0)
     .map(([s, n]) => `${n} ${s}`)

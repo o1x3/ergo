@@ -4,9 +4,71 @@ All notable changes to ergo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and ergo adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0] - 2026-07-07
+
+### Added
+- **Incremental reviews** (`reviews.incremental`, on by default). ergo hashes
+  each file's rendered diff; files byte-identical to the last review carry
+  their findings forward instead of being re-reviewed, and a fully-unchanged
+  changeset replays instantly with zero API spend. Reuse requires the same
+  model + profile and an equal-or-looser confidence filter, is disabled by
+  `--prompt`/`--instructions`, and can be skipped per run with the new
+  `--full` flag. The summary pass still covers the whole changeset.
+- **Static analysis runs in parallel** (up to 4 tools concurrently) with
+  deterministic output ordering — multi-linter repos ground reviews faster.
+- **More config now enforced:** `reviews.enabled: false` skips reviews (no
+  credential needed — useful as a per-repo opt-out for hook rollouts);
+  `reviews.ignore.head_branches` / `base_branches` skip matching branches;
+  `knowledge_base.context_files.patterns` and `code_guidelines.filePatterns`
+  now drive which guideline files are gathered (globs match tracked files via
+  `git ls-files`, so `node_modules` is never scanned); `tools.<name>.level`
+  maps to shellcheck `-S`, semgrep `--severity`, and eslint `--quiet`.
+- `ergo findings` honors `output.default_format` and `output.color`, and
+  `--format agent` now replays the full NDJSON stream (it previously printed
+  nothing).
+- **Every documented option now does something.** `reviews.sequence_diagrams`
+  and `reviews.changed_files_summary` gate their sections (the summary prompt
+  is told not to produce a diagram when disabled); `output.markdown_diagrams`
+  drops the Mermaid block from markdown reports; `model.provider` mismatches
+  with the active credential are warned about; `ergo chat`, `ergo describe`,
+  and `ergo learn mine` honor `model.default` from config; the MCP
+  `ergo_review` tool applies learnings/path instructions/custom agents/tone
+  and persists its result (so `ergo_findings` and `ergo fix` work after it);
+  compat-only keys (`web_search`, `type_verify`, PR-specific ignores, …) are
+  labeled as such in `schema.json`.
+- `--profile` is validated; conflicting target flags (`--commit` + `--base` +
+  `--type` …) error instead of resolving by silent precedence; `--type` help
+  text explains that `all`/`uncommitted` both mean the working tree vs HEAD.
 
 ### Fixed
+- **Adversarial review of the incremental-reuse design (116-agent workflow)
+  hardened it before release:**
+  - A partially-failed review (some findings batches erroring) no longer
+    poisons the cache: files the model never saw are excluded from the reuse
+    hashes, reported as `stats.unreviewedFiles`, and called out loudly in
+    terminal output — a retry re-reviews exactly those files.
+  - Findings reuse now requires an identical **prompt fingerprint** (guidelines,
+    learnings, path instructions, custom agents, `--prompt` focus, tone,
+    language, reasoning effort) plus the same model and profile — so editing
+    AGENTS.md, adding a learning, or running `--deep` invalidates reuse instead
+    of silently replaying stale findings.
+  - The zero-spend fast path only replays the cached summary when the file SET
+    is identical; if files left the changeset, findings are still carried but
+    the summary is regenerated.
+  - Carried findings are streamed before the `review_completed` NDJSON status
+    event; `--budget` validation runs on every path and the estimate includes
+    the whole-changeset summary pass; `ignore.base_branches` now also applies
+    to the auto-detected base.
+  - Whole-repo scanners (gitleaks, golangci-lint, clippy) run serially so they
+    can't race concurrent per-file linters; timed-out tools are reported as
+    skipped instead of "ran" with silently-dropped findings; semgrep's `level`
+    now means *minimum* severity (it was an exact-match filter that dropped
+    ERROR findings when set to `warning`).
+  - Guideline gathering reads explicitly-named files before glob matches so a
+    pile of `.cursor/rules/*` can't evict AGENTS.md/CLAUDE.md; the
+    `knowledge_base.opt_out` master switch now also disables guidelines.
+  - `extractJson` no longer descends into a malformed object and returns a
+    nested fragment that happens to parse.
 - **Non-ASCII filenames survive diff collection.** Git octal-escapes and quotes
   non-ASCII paths by default (`"caf\303\251.ts"`), which the diff parser
   couldn't match — such files surfaced with an empty path and dodged filters

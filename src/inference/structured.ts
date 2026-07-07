@@ -7,19 +7,9 @@ import type {
   ReasoningEffort,
 } from '@/inference/types';
 
-// Pull the first balanced JSON object/array out of a model response. Handles
-// ```json fences, leading prose, and trailing chatter that some models emit
-// even when asked for pure JSON.
-export function extractJson(text: string): string | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fence?.[1]?.trim() ?? trimmed;
-
-  const start = candidate.search(/[[{]/);
-  if (start === -1) return undefined;
-
+// Extract the balanced bracket run starting at `start` ({…} or […]), honoring
+// strings/escapes. Undefined when the run never closes.
+function balancedSlice(candidate: string, start: number): string | undefined {
   const open = candidate[start];
   const close = open === '{' ? '}' : ']';
   let depth = 0;
@@ -49,6 +39,39 @@ export function extractJson(text: string): string | undefined {
     }
   }
   return undefined;
+}
+
+// Pull the first PARSEABLE balanced JSON object/array out of a model response.
+// Handles ```json fences, leading prose (including bracketed prose like
+// "[Note]: …" before the real JSON), and trailing chatter. Falls back to the
+// first balanced-but-unparseable slice so callers get a useful error message.
+export function extractJson(text: string): string | undefined {
+  const trimmed = text.trim();
+  if (!trimmed) return undefined;
+
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fence?.[1]?.trim() ?? trimmed;
+
+  let searchFrom = 0;
+  let firstBalanced: string | undefined;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const rel = candidate.slice(searchFrom).search(/[[{]/);
+    if (rel === -1) break;
+    const start = searchFrom + rel;
+    const slice = balancedSlice(candidate, start);
+    if (slice === undefined) break;
+    firstBalanced ??= slice;
+    try {
+      JSON.parse(slice);
+      return slice;
+    } catch {
+      // Skip PAST the unparseable block rather than into it — descending into
+      // a malformed object could return a nested fragment that happens to
+      // parse (and even validate) while silently dropping the outer payload.
+      searchFrom = start + slice.length;
+    }
+  }
+  return firstBalanced;
 }
 
 export type StructuredRequest<T> = {

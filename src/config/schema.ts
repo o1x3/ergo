@@ -167,10 +167,13 @@ export interface ResolvedConfig {
     fileLimit: number;
     ultraFileLimit: number;
     highLevelSummary: boolean;
+    changedFilesSummary: boolean;
     sequenceDiagrams: boolean;
     pathFilters: string[];
     pathInstructions: { path: string; instructions: string }[];
     ignoreFiles: string[];
+    ignoreHeadBranches: string[];
+    ignoreBaseBranches: string[];
     maxChangedLines: number;
     honorLinguistGenerated: boolean;
     tools: Record<
@@ -194,6 +197,7 @@ export interface ResolvedConfig {
   output: {
     defaultFormat: 'pretty' | 'plain' | 'json' | 'agent' | 'sarif' | 'markdown';
     color: 'auto' | 'always' | 'never';
+    markdownDiagrams: boolean;
   };
   raw: ErgoConfig;
 }
@@ -206,6 +210,7 @@ const DEFAULT_CONTEXT_PATTERNS = [
   '.cursor/rules/**',
   'CONTRIBUTING.md',
   '.ai/**',
+  '.ergo/guidelines.md',
 ];
 
 // sensitivity (cubic) maps onto profile + min_confidence (CodeRabbit).
@@ -255,10 +260,13 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
       fileLimit: reviews.file_limit ?? 100,
       ultraFileLimit: reviews.ultra_file_limit ?? 250,
       highLevelSummary: reviews.high_level_summary ?? true,
+      changedFilesSummary: reviews.changed_files_summary ?? true,
       sequenceDiagrams: reviews.sequence_diagrams ?? true,
       pathFilters: reviews.path_filters ?? [],
       pathInstructions: reviews.path_instructions ?? [],
       ignoreFiles: reviews.ignore?.files ?? [],
+      ignoreHeadBranches: reviews.ignore?.head_branches ?? [],
+      ignoreBaseBranches: reviews.ignore?.base_branches ?? [],
       maxChangedLines: reviews.ignore?.max_changed_lines ?? 0,
       honorLinguistGenerated: reviews.ignore?.honor_linguist_generated ?? true,
       tools: reviews.tools ?? {},
@@ -289,6 +297,7 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
     output: {
       defaultFormat: config.output?.default_format ?? 'pretty',
       color: config.output?.color ?? 'auto',
+      markdownDiagrams: config.output?.markdown_diagrams ?? true,
     },
     raw: config,
   };

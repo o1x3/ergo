@@ -1,12 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { instructionsForPath } from '@/config/filters';
+import { instructionsForPath, matchesAny } from '@/config/filters';
 import type { ResolvedConfig } from '@/config/schema';
 import type { DiffSet } from '@/git/diff';
+import { exec } from '@/util/exec';
 
 const MAX_CONTEXT_FILE_BYTES = 32_000;
 const MAX_TOTAL_CONTEXT_BYTES = 80_000;
+const MAX_CONTEXT_FILES = 24;
 
 async function readCapped(
   path: string,
@@ -22,25 +24,69 @@ async function readCapped(
   }
 }
 
+const GLOB_CHARS = /[*?[{]/;
+
+// Tracked files in the repo (NUL-separated, so odd names survive). Undefined
+// outside a git repo — callers then fall back to plain-path patterns only.
+async function listTrackedFiles(root: string): Promise<string[] | undefined> {
+  const { stdout, exitCode } = await exec(['git', 'ls-files', '-z'], {
+    cwd: root,
+  });
+  if (exitCode !== 0) return undefined;
+  return stdout.split('\0').filter(Boolean);
+}
+
 // Gather repo guideline / agent-context files (AGENTS.md, CLAUDE.md, CONTRIBUTING
-// .md, .cursorrules, …) so the reviewer respects house style. Capped in size.
+// .md, .cursorrules, …) so the reviewer respects house style. Which files are
+// read comes from knowledge_base.context_files.patterns and
+// knowledge_base.code_guidelines.filePatterns; glob patterns are matched
+// against `git ls-files` (tracked files only — node_modules never scanned).
+// Capped in file count and total size.
 export async function gatherGuidelines(
   repoRoot: string,
   config: ResolvedConfig,
 ): Promise<string | undefined> {
-  if (!config.knowledgeBase.codeGuidelines.enabled) return undefined;
-  // We resolve a small set of well-known files directly (fast, predictable)
-  // rather than globbing the whole tree.
-  const wellKnown = [
-    'AGENTS.md',
-    'CLAUDE.md',
-    'CONTRIBUTING.md',
-    '.cursorrules',
-    '.ergo/guidelines.md',
-  ];
+  const kb = config.knowledgeBase;
+  // knowledge_base.opt_out is the master switch for feeding repo knowledge
+  // into prompts (learnings are gated on it by the caller).
+  if (kb.optOut) return undefined;
+  const patterns: string[] = [];
+  if (kb.contextFiles.enabled) patterns.push(...kb.contextFiles.patterns);
+  if (kb.codeGuidelines.enabled)
+    patterns.push(...kb.codeGuidelines.filePatterns);
+  if (patterns.length === 0) return undefined;
+
+  const plain = patterns.filter((p) => !GLOB_CHARS.test(p));
+  const globs = patterns.filter((p) => GLOB_CHARS.test(p));
+  const globMatches = new Set<string>();
+  if (globs.length > 0) {
+    const tracked = await listTrackedFiles(repoRoot);
+    if (tracked) {
+      for (const f of tracked) {
+        if (matchesAny(f, globs)) globMatches.add(f);
+      }
+    }
+  }
+  // Explicitly-named files first — the file-count cap must never let a pile
+  // of glob matches (e.g. 30 .cursor/rules/*) evict AGENTS.md or CLAUDE.md.
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const p of plain) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      ordered.push(p);
+    }
+  }
+  for (const p of [...globMatches].sort()) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      ordered.push(p);
+    }
+  }
+
   const parts: string[] = [];
   let total = 0;
-  for (const rel of wellKnown) {
+  for (const rel of ordered.slice(0, MAX_CONTEXT_FILES)) {
     const content = await readCapped(
       join(repoRoot, rel),
       MAX_CONTEXT_FILE_BYTES,

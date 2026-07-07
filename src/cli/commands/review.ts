@@ -4,7 +4,7 @@ import { defineCommand } from 'citty';
 
 import { runStaticAnalysis } from '@/analysis/runner';
 import { getActiveCredential } from '@/auth/resolve';
-import { makePathFilter } from '@/config/filters';
+import { makePathFilter, matchesAny } from '@/config/filters';
 import { loadConfig } from '@/config/load';
 import {
   collectDiff,
@@ -12,7 +12,7 @@ import {
   type FileDiff,
   type ReviewTarget,
 } from '@/git/diff';
-import { isGitRepo, repoRoot } from '@/git/repo';
+import { currentBranch, isGitRepo, repoRoot } from '@/git/repo';
 import { estimateCostUsd } from '@/inference/models';
 import { resolveClient } from '@/inference/resolve';
 import { loadLearningsForPrompt } from '@/memory/learnings';
@@ -34,9 +34,19 @@ import {
   gatherPathInstructions,
 } from '@/review/context';
 import { type ReviewEvent, runReview } from '@/review/engine';
+import {
+  canReuseCache,
+  carriedFindings,
+  computePromptFingerprint,
+  countBySeverity,
+  mergeFindings,
+  partitionForIncremental,
+  samePathSet,
+} from '@/review/incremental';
 import { readInstructionFiles } from '@/review/instructions';
 import type { PromptContext } from '@/review/prompts';
 import {
+  type Finding,
   type ReviewResult,
   SEVERITIES,
   SEVERITY_RANK,
@@ -145,16 +155,38 @@ export const findingsCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
-    const format = normalizeFormat(args.format as string | undefined);
+    // --format wins, else the configured default (same policy as `review`).
+    const { config } = await loadConfig(root);
+    setColorMode(config.output.color);
+    const formatInput =
+      (args.format as string | undefined) ?? config.output.defaultFormat;
+    const format = normalizeFormat(formatInput);
     if (format === null) {
       log.error(
-        `Invalid --format '${args.format}'. Use one of: ${OUTPUT_FORMATS.join(', ')}.`,
+        `Invalid --format '${formatInput}'. Use one of: ${OUTPUT_FORMATS.join(', ')}.`,
       );
       process.exitCode = 1;
       return;
     }
+    if (format === 'agent' || format === 'json' || format === 'sarif') {
+      setQuiet(true);
+    }
     log.dim(`replaying review from ${cached.savedAt}`);
-    emitOutput(format, cached.review, diffSetFromCache(cached), undefined);
+    const diff = diffSetFromCache(cached);
+    if (format === 'agent') {
+      // Replay the full NDJSON stream (an emitter-less emitOutput would write
+      // nothing at all for this format).
+      const emitter = new AgentEmitter();
+      emitter.reviewContext(diff, root);
+      for (const f of cached.review.findings) {
+        emitter.onReviewEvent({ type: 'finding', finding: f });
+      }
+      emitter.complete(cached.review.stats);
+      return;
+    }
+    emitOutput(format, cached.review, diff, undefined, {
+      diagrams: config.output.markdownDiagrams,
+    });
   },
 });
 
@@ -167,7 +199,8 @@ export const reviewCommand = defineCommand({
     type: {
       type: 'string',
       alias: 't',
-      description: 'Scope: all | committed | uncommitted | staged',
+      description:
+        'Scope: all/uncommitted (working tree vs HEAD, incl. staged) | committed (branch vs base) | staged (index only)',
     },
     base: {
       type: 'string',
@@ -220,6 +253,11 @@ export const reviewCommand = defineCommand({
     'min-confidence': {
       type: 'string',
       description: 'Only report findings at/above this confidence (0-1)',
+    },
+    full: {
+      type: 'boolean',
+      description:
+        'Force a full review (skip incremental reuse of unchanged files)',
     },
     'no-summary': { type: 'boolean', description: 'Skip the summary pass' },
     'no-static': {
@@ -297,6 +335,78 @@ export const reviewCommand = defineCommand({
       return;
     }
 
+    // Conflicting target flags must error, not resolve by silent precedence —
+    // `--type staged --commit HEAD` reviewing the commit would surprise.
+    const targetFlags = [
+      args.commit ? '--commit' : undefined,
+      args['base-commit'] ? '--base-commit' : undefined,
+      args.base ? '--base' : undefined,
+      typeArg !== undefined ? '--type' : undefined,
+    ].filter((f): f is string => Boolean(f));
+    if (targetFlags.length > 1) {
+      log.error(
+        `Conflicting review-target flags: ${targetFlags.join(' + ')}. Pass only one of --commit, --base-commit, --base, --type.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // Policy skips that need no credential: emit a well-formed empty result
+    // for machine formats (a warn alone would leave json/sarif pipes empty).
+    const emitPolicySkip = (reason: string) => {
+      log.warn(reason);
+      const emptyDiff: DiffSet = {
+        files: [],
+        target: resolveTarget(args),
+        totalAdditions: 0,
+        totalDeletions: 0,
+      };
+      const review: ReviewResult = {
+        summary: emptySummary(),
+        findings: [],
+        stats: emptyStats('', '', false),
+      };
+      if (format === 'agent') {
+        const emitter = new AgentEmitter();
+        emitter.reviewContext(emptyDiff, root);
+        emitter.complete(review.stats);
+      } else if (format !== 'pretty' && format !== 'plain') {
+        emitOutput(format, review, emptyDiff, undefined);
+      }
+    };
+
+    // reviews.enabled: false — the repo has opted out (e.g. a repo-wide git
+    // hook rollout with per-repo opt-out). Skip without requiring a credential.
+    if (!config.reviews.enabled) {
+      emitPolicySkip(
+        'Skipping review: disabled by config (reviews.enabled: false).',
+      );
+      return;
+    }
+
+    // reviews.ignore.head_branches / base_branches: skip when the current
+    // branch (or the requested base) matches an ignore glob.
+    if (config.reviews.ignoreHeadBranches.length > 0) {
+      const branch = await currentBranch(root).catch(() => undefined);
+      if (branch && matchesAny(branch, config.reviews.ignoreHeadBranches)) {
+        emitPolicySkip(
+          `Skipping review: branch '${branch}' matches reviews.ignore.head_branches.`,
+        );
+        return;
+      }
+    }
+    const baseArg = args.base as string | undefined;
+    if (
+      baseArg &&
+      config.reviews.ignoreBaseBranches.length > 0 &&
+      matchesAny(baseArg, config.reviews.ignoreBaseBranches)
+    ) {
+      emitPolicySkip(
+        `Skipping review: base '${baseArg}' matches reviews.ignore.base_branches.`,
+      );
+      return;
+    }
+
     // Resolve provider/model.
     let credential: Awaited<ReturnType<typeof getActiveCredential>>;
     try {
@@ -332,6 +442,17 @@ export const reviewCommand = defineCommand({
         `Model '${resolved.fallbackFrom}' isn't available on this account; using '${resolved.model}'.`,
       );
     }
+    // model.provider is derived from the credential, not the config — surface
+    // a mismatch instead of silently ignoring the configured value.
+    if (
+      config.model.provider &&
+      config.model.provider !== resolved.provider &&
+      !(config.model.provider === 'codex' && credential.provider === 'codex')
+    ) {
+      log.warn(
+        `config sets model.provider '${config.model.provider}' but the active credential is '${resolved.provider}'; the credential wins. Run \`ergo auth login\` to switch providers.`,
+      );
+    }
 
     // Collect + filter the diff.
     const target = resolveTarget(args);
@@ -341,6 +462,25 @@ export const reviewCommand = defineCommand({
     } catch (err) {
       handleFatal(err, format);
       process.exitCode = 1;
+      return;
+    }
+
+    // An auto-detected base (`--type committed`) is only known after
+    // collection — apply reviews.ignore.base_branches to it here. Match both
+    // the resolved ref ('origin/main') and its short name ('main').
+    if (
+      target.kind === 'branch' &&
+      diff.base &&
+      config.reviews.ignoreBaseBranches.length > 0 &&
+      (matchesAny(diff.base, config.reviews.ignoreBaseBranches) ||
+        matchesAny(
+          diff.base.replace(/^origin\//, ''),
+          config.reviews.ignoreBaseBranches,
+        ))
+    ) {
+      emitPolicySkip(
+        `Skipping review: base '${diff.base}' matches reviews.ignore.base_branches.`,
+      );
       return;
     }
 
@@ -360,7 +500,11 @@ export const reviewCommand = defineCommand({
       const emptyReview: ReviewResult = {
         summary: emptySummary(),
         findings: [],
-        stats: emptyStats(resolved),
+        stats: emptyStats(
+          resolved.model,
+          resolved.provider,
+          resolved.subscription,
+        ),
       };
       if (format === 'agent') {
         const emitter = new AgentEmitter();
@@ -404,40 +548,7 @@ export const reviewCommand = defineCommand({
       return;
     }
 
-    // Budget guard (beyond-parity): abort before spending if the estimated API
-    // cost would exceed the cap. Subscriptions are covered by the plan, so skip.
-    const budget =
-      args.budget !== undefined
-        ? Number(args.budget)
-        : config.model.maxBudgetUsd;
-    if (args.budget !== undefined && (!Number.isFinite(budget) || budget < 0)) {
-      log.error(
-        `Invalid --budget '${args.budget}'. Use a non-negative number.`,
-      );
-      process.exitCode = 1;
-      return;
-    }
-    if (budget > 0 && !resolved.subscription) {
-      const chars = serializeDiffSet(finalDiff, { maxChars: 5_000_000 }).text
-        .length;
-      // findings + summary passes both see the diff; add slack for prompts.
-      const estInput = Math.ceil((chars / 4) * 1.2) + 1500;
-      const estOutput = finalDiff.files.length * 350 + 800;
-      const est = estimateCostUsd(
-        resolved.model,
-        { input: estInput, output: estOutput },
-        { provider: resolved.provider },
-      );
-      if (est !== undefined && est > budget) {
-        log.error(
-          `Estimated cost ~$${est.toFixed(3)} exceeds --budget $${budget.toFixed(2)}. Use --light, narrow the diff, or raise the budget.`,
-        );
-        process.exitCode = 1;
-        return;
-      }
-    }
-
-    // Build prompt context.
+    // Review knobs (needed before the incremental partition).
     let minConfidence = config.reviews.minConfidence;
     if (args['min-confidence'] !== undefined) {
       const n = Number(args['min-confidence']);
@@ -453,7 +564,29 @@ export const reviewCommand = defineCommand({
     const profile =
       (args.profile as 'chill' | 'assertive' | undefined) ??
       config.reviews.profile;
+    if (!['chill', 'assertive'].includes(profile)) {
+      log.error(`Invalid --profile '${profile}'. Use chill | assertive.`);
+      process.exitCode = 1;
+      return;
+    }
 
+    // Validate --budget up front so a typo'd value fails on every path
+    // (including the zero-spend fast path below).
+    const budget =
+      args.budget !== undefined
+        ? Number(args.budget)
+        : config.model.maxBudgetUsd;
+    if (args.budget !== undefined && (!Number.isFinite(budget) || budget < 0)) {
+      log.error(
+        `Invalid --budget '${args.budget}'. Use a non-negative number.`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+
+    // Non-diff prompt inputs — gathered before the incremental partition so
+    // they can be fingerprinted: findings reuse is only sound when the model
+    // would have been asked the exact same question.
     const [guidelines, learnings, instructionFiles] = await Promise.all([
       gatherGuidelines(root, config),
       config.knowledgeBase.optOut
@@ -469,6 +602,158 @@ export const reviewCommand = defineCommand({
     ]);
     const pathInstructions = gatherPathInstructions(finalDiff, config);
     const customAgents = gatherCustomAgents(finalDiff, config);
+    const customFocusParts = [
+      args.prompt as string | undefined,
+      instructionFiles,
+      customAgents,
+    ].filter(Boolean);
+    const customFocus = customFocusParts.length
+      ? customFocusParts.join('\n\n')
+      : undefined;
+    const reasoningEffort = isDeep
+      ? 'high'
+      : isFast
+        ? 'low'
+        : config.model.reasoningEffort;
+    const promptFingerprint = computePromptFingerprint({
+      guidelines,
+      learnings,
+      pathInstructions,
+      customAgents,
+      customFocus,
+      toneInstructions: config.toneInstructions,
+      language: config.language,
+      reasoningEffort,
+    });
+
+    // Incremental reuse: files whose rendered diff is byte-identical to the
+    // last review — under an identical prompt context — carry their findings
+    // forward instead of being re-reviewed.
+    let reviewDiff = finalDiff;
+    let carried: Finding[] = [];
+    let reusedCount = 0;
+    let reusedSummary: ReviewResult['summary'] | undefined;
+    let reusedSummaryValid = false;
+    if (config.reviews.incremental && !args.full) {
+      const cached = await loadReviewCache(root);
+      if (
+        canReuseCache(cached, {
+          model: resolved.model,
+          profile,
+          minConfidence,
+          promptFingerprint,
+        })
+      ) {
+        reusedSummary = cached.review.summary;
+        // The cached summary describes the cached FILE SET; only replay it
+        // when the current changeset covers exactly the same files.
+        reusedSummaryValid = samePathSet(cached, finalDiff.files);
+        const { fresh, unchanged } = partitionForIncremental(
+          finalDiff.files,
+          cached.context.diffHashes ?? {},
+        );
+        if (unchanged.length > 0) {
+          carried = carriedFindings(
+            cached,
+            new Set(unchanged.map((f) => f.path)),
+            minConfidence,
+          );
+          reusedCount = unchanged.length;
+          reviewDiff = {
+            ...finalDiff,
+            files: fresh,
+            totalAdditions: fresh.reduce((n, f) => n + f.additions, 0),
+            totalDeletions: fresh.reduce((n, f) => n + f.deletions, 0),
+          };
+          log.dim(
+            `incremental: ${unchanged.length} file(s) unchanged since the last review — reusing their findings (run with --full to re-review).`,
+          );
+        }
+      }
+    }
+
+    // Everything unchanged AND the file set is identical: rebuild the result
+    // from cache with zero API spend. (If the file set shrank, fall through —
+    // the findings are still carried but the summary is regenerated.)
+    if (
+      reusedCount > 0 &&
+      reviewDiff.files.length === 0 &&
+      reusedSummaryValid
+    ) {
+      const findings = mergeFindings([], carried);
+      const review: ReviewResult = {
+        summary: reusedSummary ?? emptySummary(),
+        findings,
+        stats: {
+          ...emptyStats(
+            resolved.model,
+            resolved.provider,
+            resolved.subscription,
+          ),
+          // Same accounting as the engine: binary/hunk-less files are not
+          // "reviewed".
+          filesReviewed: finalDiff.files.filter(
+            (f) => !f.binary && f.hunks.length > 0,
+          ).length,
+          filesSkipped: droppedByLimit + skippedByFilter,
+          additions: finalDiff.totalAdditions,
+          deletions: finalDiff.totalDeletions,
+          findingsBySeverity: countBySeverity(findings),
+        },
+      };
+      await saveReviewCache(root, finalDiff, review, {
+        profile,
+        minConfidence,
+        promptFingerprint,
+      }).catch(() => {});
+      await recordUsage(root, review.stats).catch(() => {});
+      if (format === 'agent') {
+        const emitter = new AgentEmitter();
+        emitter.reviewContext(finalDiff, root);
+        for (const f of review.findings) {
+          emitter.onReviewEvent({ type: 'finding', finding: f });
+        }
+        emitter.complete(review.stats);
+      } else {
+        emitOutput(format, review, finalDiff, undefined);
+      }
+      if (failOn) {
+        const worst = review.findings.reduce(
+          (max, f) => Math.max(max, SEVERITY_RANK[f.severity]),
+          0,
+        );
+        if (worst >= SEVERITY_RANK[failOn]) process.exitCode = 2;
+      }
+      return;
+    }
+
+    // Budget guard (beyond-parity): abort before spending if the estimated API
+    // cost would exceed the cap. Subscriptions are covered by the plan, so skip.
+    if (budget > 0 && !resolved.subscription) {
+      const chars = serializeDiffSet(reviewDiff, { maxChars: 5_000_000 }).text
+        .length;
+      // On incremental runs the summary pass still serializes the WHOLE
+      // changeset (capped at the per-batch budget) — include it.
+      const summaryChars =
+        reusedCount > 0
+          ? serializeDiffSet(finalDiff, { maxChars: 120_000 }).text.length
+          : 0;
+      // findings + summary passes both see the diff; add slack for prompts.
+      const estInput = Math.ceil(((chars + summaryChars) / 4) * 1.2) + 1500;
+      const estOutput = finalDiff.files.length * 350 + 800;
+      const est = estimateCostUsd(
+        resolved.model,
+        { input: estInput, output: estOutput },
+        { provider: resolved.provider },
+      );
+      if (est !== undefined && est > budget) {
+        log.error(
+          `Estimated cost ~$${est.toFixed(3)} exceeds --budget $${budget.toFixed(2)}. Use --light, narrow the diff, or raise the budget.`,
+        );
+        process.exitCode = 1;
+        return;
+      }
+    }
 
     // Static-analysis grounding: run installed linters on changed lines and feed
     // their findings to the model to verify/dedupe/prioritize. Tools run against
@@ -478,7 +763,7 @@ export const reviewCommand = defineCommand({
       target.kind === 'working' ||
       target.kind === 'staged' ||
       target.kind === 'branch';
-    const analysis = await runStaticAnalysis(finalDiff, {
+    const analysis = await runStaticAnalysis(reviewDiff, {
       repoRoot: root,
       toggles: config.reviews.tools,
       enabled: !args['no-static'] && staticSafeTarget,
@@ -487,32 +772,46 @@ export const reviewCommand = defineCommand({
       log.dim(`static analysis: ${analysis.ran.join(', ')}`);
     }
 
-    const customFocusParts = [
-      args.prompt as string | undefined,
-      instructionFiles,
-      customAgents,
-    ].filter(Boolean);
-
     const promptContext: PromptContext = {
       profile,
       minConfidence,
-      customFocus: customFocusParts.length
-        ? customFocusParts.join('\n\n')
-        : undefined,
+      customFocus,
       guidelines,
       pathInstructions,
       learnings,
       staticFindings: analysis.groundingText,
       language: config.language,
       toneInstructions: config.toneInstructions,
+      sequenceDiagrams: config.reviews.sequenceDiagrams,
     };
 
     // Run the review.
     const agentEmitter = format === 'agent' ? new AgentEmitter() : undefined;
     if (agentEmitter) agentEmitter.reviewContext(finalDiff, root);
 
+    // Agent mode: carried findings must reach the stream BEFORE the engine's
+    // final "review_completed" status event (consumers may stop reading at
+    // it). Count fresh finding events so carried ids continue the sequence —
+    // mergeFindings assigns the same ids afterwards.
+    let freshFindingEvents = 0;
+    let carriedStreamed = false;
+    const streamCarried = () => {
+      if (!agentEmitter || carriedStreamed) return;
+      carriedStreamed = true;
+      carried.forEach((f, i) => {
+        agentEmitter.onReviewEvent({
+          type: 'finding',
+          finding: { ...f, id: `ERG-${freshFindingEvents + i + 1}` },
+        });
+      });
+    };
+
     const onEvent = (event: ReviewEvent) => {
       if (agentEmitter) {
+        if (event.type === 'finding') freshFindingEvents += 1;
+        if (event.type === 'status' && event.phase === 'completed') {
+          streamCarried();
+        }
         agentEmitter.onReviewEvent(event);
         return;
       }
@@ -538,7 +837,10 @@ export const reviewCommand = defineCommand({
     let review: ReviewResult;
     try {
       review = await runReview({
-        diff: finalDiff,
+        diff: reviewDiff,
+        // Incremental runs review a subset; the summary must still describe
+        // the whole changeset.
+        summaryDiff: reusedCount > 0 ? finalDiff : undefined,
         resolved,
         promptContext,
         generateSummary: !args['no-summary'] && config.reviews.highLevelSummary,
@@ -564,17 +866,50 @@ export const reviewCommand = defineCommand({
       return;
     }
 
+    // Fold carried-forward findings back in and restore whole-changeset stats.
+    if (reusedCount > 0) {
+      // Safety net: if the engine never emitted a completed status (it always
+      // should), make sure carried findings still reach the agent stream.
+      streamCarried();
+      review.findings = mergeFindings(review.findings, carried);
+      review.stats.findingsBySeverity = countBySeverity(review.findings);
+      review.stats.filesReviewed += reusedCount;
+      review.stats.additions = finalDiff.totalAdditions;
+      review.stats.deletions = finalDiff.totalDeletions;
+    }
+
+    // reviews.changed_files_summary / sequence_diagrams: honor the toggles in
+    // the emitted result (the prompt already discourages generation, but the
+    // model may still return the fields).
+    if (!config.reviews.changedFilesSummary) {
+      review.summary.fileSummaries = [];
+    }
+    if (!config.reviews.sequenceDiagrams) {
+      review.summary.sequenceDiagram = undefined;
+    }
+
     review.stats.filesSkipped += droppedByLimit;
     if (skippedByFilter > 0) {
       review.stats.filesSkipped += skippedByFilter;
     }
+    if (review.stats.unreviewedFiles?.length) {
+      log.error(
+        `PARTIAL COVERAGE: ${review.stats.unreviewedFiles.length} file(s) were not reviewed (batch failures): ${review.stats.unreviewedFiles.join(', ')}. Re-run to retry them.`,
+      );
+    }
 
     // Persist for `ergo review findings` replay and `ergo fix`; log usage.
-    await saveReviewCache(root, finalDiff, review).catch(() => {});
+    await saveReviewCache(root, finalDiff, review, {
+      profile,
+      minConfidence,
+      promptFingerprint,
+    }).catch(() => {});
     await recordUsage(root, review.stats).catch(() => {});
 
     // Emit output.
-    emitOutput(format, review, finalDiff, agentEmitter);
+    emitOutput(format, review, finalDiff, agentEmitter, {
+      diagrams: config.output.markdownDiagrams,
+    });
 
     // Exit code policy (failOn validated above).
     if (failOn) {
@@ -594,6 +929,7 @@ function emitOutput(
   review: ReviewResult,
   diff: DiffSet,
   agentEmitter: AgentEmitter | undefined,
+  opts: { diagrams?: boolean } = {},
 ): void {
   switch (format) {
     case 'agent':
@@ -606,7 +942,9 @@ function emitOutput(
       process.stdout.write(`${renderSarif(review)}\n`);
       break;
     case 'markdown':
-      process.stdout.write(`${renderMarkdown(review, diff)}\n`);
+      process.stdout.write(
+        `${renderMarkdown(review, diff, { diagrams: opts.diagrams })}\n`,
+      );
       break;
     case 'plain':
       process.stdout.write(`${renderTerminal(review, { plain: true })}\n`);
@@ -656,7 +994,11 @@ function emptySummary() {
   };
 }
 
-function emptyStats(resolved: ReturnType<typeof resolveClient>) {
+function emptyStats(
+  model: string,
+  provider: string,
+  subscriptionCovered: boolean,
+) {
   return {
     filesReviewed: 0,
     filesSkipped: 0,
@@ -672,9 +1014,9 @@ function emptyStats(resolved: ReturnType<typeof resolveClient>) {
     tokensInput: 0,
     tokensOutput: 0,
     costUsd: 0,
-    subscriptionCovered: resolved.subscription,
-    model: resolved.model,
-    provider: resolved.provider,
+    subscriptionCovered,
+    model,
+    provider,
     durationMs: 0,
   };
 }

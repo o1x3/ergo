@@ -13,10 +13,11 @@ export function humanCount(n: number, decimals = 1): string {
   return `${trim(n / 1_000_000_000, decimals)}B`;
 }
 
-// `decimals` places, dropping a trailing ".0".
+// `decimals` places, dropping trailing zeros (and a bare trailing dot).
 function trim(n: number, decimals: number): string {
   const s = n.toFixed(decimals);
-  return s.endsWith('.0') ? s.slice(0, -2) : s;
+  if (!s.includes('.')) return s;
+  return s.replace(/\.?0+$/, '');
 }
 
 // 1234 → "1,234" (thousands separators, no locale dependence).

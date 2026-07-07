@@ -122,6 +122,9 @@ export interface ReviewResult {
 export interface ReviewStats {
   filesReviewed: number;
   filesSkipped: number;
+  // Files whose findings batch failed — the model never reviewed them, so the
+  // review's coverage is PARTIAL. Consumers should treat them as un-covered.
+  unreviewedFiles?: string[];
   additions: number;
   deletions: number;
   findingsBySeverity: Record<Severity, number>;

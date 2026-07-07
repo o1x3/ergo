@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import { defineCommand } from 'citty';
 
 import { getActiveCredential } from '@/auth/resolve';
+import { loadConfig } from '@/config/load';
 import { collectDiff, type ReviewTarget } from '@/git/diff';
 import { isGitRepo, repoRoot } from '@/git/repo';
 import { resolveClient } from '@/inference/resolve';
@@ -52,9 +53,10 @@ export const chatCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
+    const { config } = await loadConfig(root);
     const resolved = resolveClient({
       credential,
-      modelOverride: args.model as string | undefined,
+      modelOverride: (args.model as string | undefined) ?? config.model.default,
       sessionId: `ergo-chat-${Date.now()}`,
     });
 

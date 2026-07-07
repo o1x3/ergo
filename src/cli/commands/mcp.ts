@@ -11,10 +11,24 @@ import { loadConfig } from '@/config/load';
 import { collectDiff, type DiffSet, type ReviewTarget } from '@/git/diff';
 import { isGitRepo, repoRoot } from '@/git/repo';
 import { resolveClient } from '@/inference/resolve';
-import { addLearning, listLearnings } from '@/memory/learnings';
-import { diffSetFromCache, loadReviewCache } from '@/review/cache';
-import { gatherGuidelines } from '@/review/context';
+import {
+  addLearning,
+  listLearnings,
+  loadLearningsForPrompt,
+} from '@/memory/learnings';
+import { recordUsage } from '@/memory/usage';
+import {
+  diffSetFromCache,
+  loadReviewCache,
+  saveReviewCache,
+} from '@/review/cache';
+import {
+  gatherCustomAgents,
+  gatherGuidelines,
+  gatherPathInstructions,
+} from '@/review/context';
 import { runReview } from '@/review/engine';
+import { computePromptFingerprint } from '@/review/incremental';
 import { VERSION } from '@/version';
 
 function targetFrom(type?: string, base?: string): ReviewTarget {
@@ -90,17 +104,50 @@ export function buildMcpServer(): McpServer {
         );
         if (files.length === 0) return ok({ findings: [], summary: null });
         const filtered: DiffSet = { ...diff, files };
-        const guidelines = await gatherGuidelines(root, config);
+        // Apply the same knowledge the CLI review applies: guidelines,
+        // stored learnings, path instructions, and custom agents.
+        const [guidelines, learnings] = await Promise.all([
+          gatherGuidelines(root, config),
+          config.knowledgeBase.optOut
+            ? Promise.resolve(undefined)
+            : loadLearningsForPrompt(root, config.knowledgeBase.learningsScope),
+        ]);
+        const pathInstructions = gatherPathInstructions(filtered, config);
+        const customAgents = gatherCustomAgents(filtered, config);
         const review = await runReview({
           diff: filtered,
           resolved,
           promptContext: {
             profile: config.reviews.profile,
             minConfidence: config.reviews.minConfidence,
+            customFocus: customAgents,
             guidelines,
+            pathInstructions,
+            learnings,
             language: config.language,
+            toneInstructions: config.toneInstructions,
+            sequenceDiagrams: config.reviews.sequenceDiagrams,
           },
+          temperature: config.model.temperature,
+          reasoningEffort: config.model.reasoningEffort,
         });
+        // Persist so ergo_findings / `ergo fix` see this review, and count it
+        // in `ergo stats` — same behavior as the CLI path.
+        await saveReviewCache(root, filtered, review, {
+          profile: config.reviews.profile,
+          minConfidence: config.reviews.minConfidence,
+          promptFingerprint: computePromptFingerprint({
+            guidelines,
+            learnings,
+            pathInstructions,
+            customAgents,
+            customFocus: customAgents,
+            toneInstructions: config.toneInstructions,
+            language: config.language,
+            reasoningEffort: config.model.reasoningEffort,
+          }),
+        }).catch(() => {});
+        await recordUsage(root, review.stats).catch(() => {});
         return ok({
           summary: review.summary,
           findings: review.findings,

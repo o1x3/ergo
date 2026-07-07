@@ -20,10 +20,12 @@ export const modelsCommand = defineCommand({
     const provider = cred?.provider;
 
     if (provider) {
+      // Guard against a hand-edited auth.json with an unknown provider —
+      // a raw Record lookup would print "undefined".
+      const def = DEFAULT_MODELS[provider] ?? '(unknown provider)';
+      const fast = FAST_MODELS[provider] ?? '(unknown provider)';
       log.info(`Active provider: ${pc.bold(provider)}`);
-      log.info(
-        `  default=${pc.cyan(DEFAULT_MODELS[provider])}  fast=${pc.cyan(FAST_MODELS[provider])}`,
-      );
+      log.info(`  default=${pc.cyan(def)}  fast=${pc.cyan(fast)}`);
       log.info('');
     }
 

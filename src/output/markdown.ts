@@ -26,7 +26,11 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
 };
 
 // A self-contained markdown report: `ergo review --format markdown > review.md`.
-export function renderMarkdown(review: ReviewResult, diff: DiffSet): string {
+export function renderMarkdown(
+  review: ReviewResult,
+  diff: DiffSet,
+  opts: { diagrams?: boolean } = {},
+): string {
   const { summary, findings, stats } = review;
   const md: string[] = [];
 
@@ -62,7 +66,8 @@ export function renderMarkdown(review: ReviewResult, diff: DiffSet): string {
     md.push('');
   }
 
-  if (summary.sequenceDiagram?.trim()) {
+  // output.markdown_diagrams: false drops the Mermaid block from markdown.
+  if (opts.diagrams !== false && summary.sequenceDiagram?.trim()) {
     md.push('## Sequence diagram');
     md.push('');
     const diagram = summary.sequenceDiagram.trim();
