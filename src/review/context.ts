@@ -26,12 +26,16 @@ async function readCapped(
 
 const GLOB_CHARS = /[*?[{]/;
 
-// Tracked files in the repo (NUL-separated, so odd names survive). Undefined
-// outside a git repo — callers then fall back to plain-path patterns only.
-async function listTrackedFiles(root: string): Promise<string[] | undefined> {
-  const { stdout, exitCode } = await exec(['git', 'ls-files', '-z'], {
-    cwd: root,
-  });
+// Tracked + untracked-but-not-ignored files (NUL-separated, so odd names
+// survive). Untracked matters: a fresh `.cursor/rules/` dir must feed reviews
+// before its first commit. `--exclude-standard` keeps ignored trees
+// (node_modules, dist) out. Undefined outside a git repo — callers then fall
+// back to plain-path patterns only.
+async function listRepoFiles(root: string): Promise<string[] | undefined> {
+  const { stdout, exitCode } = await exec(
+    ['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
+    { cwd: root },
+  );
   if (exitCode !== 0) return undefined;
   return stdout.split('\0').filter(Boolean);
 }
@@ -60,9 +64,9 @@ export async function gatherGuidelines(
   const globs = patterns.filter((p) => GLOB_CHARS.test(p));
   const globMatches = new Set<string>();
   if (globs.length > 0) {
-    const tracked = await listTrackedFiles(repoRoot);
-    if (tracked) {
-      for (const f of tracked) {
+    const repoFiles = await listRepoFiles(repoRoot);
+    if (repoFiles) {
+      for (const f of repoFiles) {
         if (matchesAny(f, globs)) globMatches.add(f);
       }
     }

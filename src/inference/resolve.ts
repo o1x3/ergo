@@ -1,4 +1,5 @@
-import { extractAccountIdFromJwt } from '@/auth/codex';
+import { extractAccountIdFromJwt, refreshOAuthCredential } from '@/auth/codex';
+import { saveCredential } from '@/auth/storage';
 import { createAiSdkClient } from '@/inference/aisdk-client';
 import { createCodexClient } from '@/inference/codex-client';
 import {
@@ -12,6 +13,7 @@ import type {
   Provider,
 } from '@/inference/types';
 import { saveRateLimits } from '@/memory/ratelimits';
+import { authFilePath } from '@/util/paths';
 
 export type ResolvedClient = {
   client: ModelClient;
@@ -57,6 +59,20 @@ export function resolveClient(opts: ResolveOptions): ResolvedClient {
       // usage` can report remaining quota. Fire-and-forget; never blocks.
       onRateLimits: (snapshot) => {
         void saveRateLimits(snapshot);
+      },
+      // The backend can invalidate an access token before its local expiry
+      // (the official Codex CLI rotates tokens). Refresh once mid-run and
+      // persist so the next invocation starts healthy.
+      refreshAuth: async () => {
+        try {
+          const refreshed = await refreshOAuthCredential(
+            credential as typeof credential & { type: 'oauth' },
+          );
+          await saveCredential(authFilePath(), refreshed).catch(() => {});
+          return refreshed.accessToken;
+        } catch {
+          return undefined;
+        }
       },
     });
 

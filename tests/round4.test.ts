@@ -542,3 +542,33 @@ describe('micro-fixes', () => {
     expect(maxInFlight).toBe(2);
   });
 });
+
+describe('static-analysis scheduling guards', () => {
+  test('whole-repo scanners stay marked serial', async () => {
+    const { getToolByName } = await import('@/analysis/tools');
+    for (const name of ['gitleaks', 'golangci-lint', 'clippy']) {
+      expect(getToolByName(name)?.serial).toBe(true);
+    }
+    // Per-file linters must NOT be serialized.
+    for (const name of ['eslint', 'ruff', 'shellcheck']) {
+      expect(getToolByName(name)?.serial).toBeUndefined();
+    }
+  });
+});
+
+describe('guidelines: untracked context files are included', () => {
+  test('a fresh (uncommitted) .cursor/rules dir feeds guidelines', async () => {
+    const root = await initRepo();
+    const g = gitIn(root);
+    await writeFile(join(root, 'base.ts'), 'export {};\n');
+    await g(['add', '.']);
+    await g(['commit', '-q', '-m', 'init']);
+    // Untracked context files — must still be picked up by glob patterns.
+    await mkdir(join(root, '.cursor', 'rules'), { recursive: true });
+    await writeFile(join(root, '.cursor', 'rules', 'wip.md'), 'wip rule\n');
+
+    const { config } = parseConfigString('');
+    const out = await gatherGuidelines(await canonicalRoot(root), config!);
+    expect(out).toContain('wip rule');
+  });
+});

@@ -4,6 +4,25 @@ All notable changes to ergo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and ergo adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.1] - 2026-07-07
+
+First release verified against the live Codex backend end-to-end (review,
+incremental zero-spend replay, and `ergo usage` rate-limit capture) — which
+immediately surfaced the first fix below.
+
+### Fixed
+- **Mid-run token refresh.** The ChatGPT backend can invalidate an access
+  token before its local expiry (the official Codex CLI rotates tokens).
+  A 401 now triggers one refresh-and-retry with the stored refresh token
+  (persisted for the next run); if refresh fails, the error tells you to
+  run `ergo auth import` / `ergo auth login` instead of dying cryptically.
+- Guideline glob patterns (e.g. `.cursor/rules/**`) now also match
+  **untracked** files (`git ls-files --others --exclude-standard`), so a
+  fresh rules directory feeds reviews before its first commit — found by
+  ergo reviewing its own release commit.
+- CI: bumped `actions/checkout`→v7, `upload-artifact`→v7,
+  `download-artifact`→v8, `codeql-action`→v4 (Node 20 deprecation).
+
 ## [0.3.0] - 2026-07-07
 
 ### Added

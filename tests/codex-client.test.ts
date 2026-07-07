@@ -109,3 +109,68 @@ describe('fetchCodexWithRetry', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('401 auth refresh-and-retry', () => {
+  const sse = (text: string) =>
+    new Response(
+      `data: {"type":"response.output_text.delta","delta":${JSON.stringify(text)}}\n\n` +
+        `data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}\n\n`,
+      { status: 200, headers: { 'content-type': 'text/event-stream' } },
+    );
+
+  test('an invalidated token is refreshed once and the call retried', async () => {
+    const { createCodexClient } = await import('@/inference/codex-client');
+    const authHeaders: string[] = [];
+    let refreshCalls = 0;
+    const client = createCodexClient({
+      baseUrl: 'https://example.test/backend-api/codex/responses',
+      accessToken: 'stale-token',
+      accountId: 'acc',
+      fetchImpl: (async (_url: unknown, init: RequestInit) => {
+        authHeaders.push(new Headers(init.headers).get('authorization') ?? '');
+        if (authHeaders.length === 1) {
+          return new Response(
+            JSON.stringify({
+              error: {
+                message: 'Your authentication token has been invalidated.',
+              },
+            }),
+            { status: 401 },
+          );
+        }
+        return sse('hello');
+      }) as unknown as typeof fetch,
+      refreshAuth: async () => {
+        refreshCalls += 1;
+        return 'fresh-token';
+      },
+    });
+    const result = await client.complete({
+      model: 'gpt-5.4',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(result.text).toBe('hello');
+    expect(refreshCalls).toBe(1);
+    expect(authHeaders).toEqual(['Bearer stale-token', 'Bearer fresh-token']);
+  });
+
+  test('a failed refresh surfaces the 401 with re-auth guidance', async () => {
+    const { createCodexClient } = await import('@/inference/codex-client');
+    const client = createCodexClient({
+      baseUrl: 'https://example.test/backend-api/codex/responses',
+      accessToken: 'stale-token',
+      accountId: 'acc',
+      fetchImpl: (async () =>
+        new Response(JSON.stringify({ error: { message: 'invalidated' } }), {
+          status: 401,
+        })) as unknown as typeof fetch,
+      refreshAuth: async () => undefined,
+    });
+    await expect(
+      client.complete({
+        model: 'gpt-5.4',
+        messages: [{ role: 'user', content: 'hi' }],
+      }),
+    ).rejects.toThrow(/ergo auth import/);
+  });
+});

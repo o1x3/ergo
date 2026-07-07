@@ -42,6 +42,11 @@ export type CodexClientConfig = {
   // usage`. Kept here (not in the per-call request) so every Codex call updates
   // it without threading through the engine.
   onRateLimits?: (snapshot: RateLimitSnapshot) => void;
+  // Called when the backend rejects the access token (401) even though it
+  // hasn't locally expired — the server can invalidate tokens out-of-band
+  // (e.g. the official Codex CLI rotated them). Returns a fresh access token
+  // to retry with once, or undefined if refresh isn't possible.
+  refreshAuth?: () => Promise<string | undefined>;
 };
 
 const DEFAULT_RETRY: Required<CodexRetryOptions> = {
@@ -318,6 +323,11 @@ function friendlyError(status: number, raw: string): Error {
       `${message} Try one of: ${CHATGPT_ACCOUNT_SAFE_MODEL_HINT} — or omit the model to let ergo pick a safe default.`,
     );
   }
+  if (status === 401) {
+    return new Error(
+      `Codex backend error 401: ${message} Run \`ergo auth import\` (or \`ergo auth login\`) to refresh your credential.`,
+    );
+  }
   return new Error(`Codex backend error ${status}: ${message}`);
 }
 
@@ -365,21 +375,37 @@ export function createCodexClient(config: CodexClientConfig): ModelClient {
         body.text = { format: { type: 'json_object' } };
       }
 
-      const headers = buildCodexHeaders({ ...config, accountId });
       const url = resolveCodexUrl(baseUrl);
       const fetchImpl = config.fetchImpl ?? fetch;
 
-      const response = await fetchCodexWithRetry(
-        fetchImpl,
-        url,
-        {
-          method: 'POST',
-          headers,
-          body: JSON.stringify(body),
-          signal: req.signal,
-        },
-        { sleep: config.sleepImpl, retry: config.retry, signal: req.signal },
-      );
+      const request = (accessToken: string) =>
+        fetchCodexWithRetry(
+          fetchImpl,
+          url,
+          {
+            method: 'POST',
+            headers: buildCodexHeaders({ ...config, accessToken, accountId }),
+            body: JSON.stringify(body),
+            signal: req.signal,
+          },
+          { sleep: config.sleepImpl, retry: config.retry, signal: req.signal },
+        );
+
+      let response = await request(config.accessToken);
+
+      // The server can invalidate tokens before their local expiry (the
+      // official Codex CLI rotates them). Refresh once and retry.
+      if (response.status === 401 && config.refreshAuth) {
+        const freshToken = await config.refreshAuth().catch(() => undefined);
+        if (freshToken) {
+          try {
+            await response.body?.cancel();
+          } catch {
+            // ignore
+          }
+          response = await request(freshToken);
+        }
+      }
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
