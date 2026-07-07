@@ -1,6 +1,6 @@
 {
   "name": "@o1x3/ergo",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Ergo — a fast, local-first AI code reviewer CLI. Bring your own Codex/ChatGPT subscription or API key.",
   "type": "module",
   "license": "MIT",
