@@ -121,6 +121,22 @@ export async function worktreeStatus(cwd?: string): Promise<WorktreeStatus> {
   };
 }
 
+// Subject + author of a single commit; undefined when the ref doesn't resolve.
+export async function commitMeta(
+  ref: string,
+  cwd?: string,
+): Promise<
+  { subject: string; authorName: string; authorEmail: string } | undefined
+> {
+  const { stdout, exitCode } = await exec(
+    ['git', 'log', '-1', '--format=%s%n%an%n%ae', ref],
+    { cwd },
+  );
+  if (exitCode !== 0) return undefined;
+  const [subject = '', authorName = '', authorEmail = ''] = stdout.split('\n');
+  return { subject, authorName, authorEmail };
+}
+
 // Recent commit subjects+bodies, optionally filtered to specific authors, for
 // learning a team's review conventions from history.
 export async function recentLog(

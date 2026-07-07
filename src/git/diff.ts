@@ -44,6 +44,7 @@ export interface FileDiff {
 export type ReviewTarget =
   | { kind: 'working' } // staged + unstaged + untracked vs HEAD
   | { kind: 'staged' } // index vs HEAD
+  | { kind: 'all'; base: string } // committed (vs base) + working tree
   | { kind: 'branch'; base: string } // three-dot vs base
   | { kind: 'commit'; ref: string } // a single commit
   | { kind: 'range'; range: string }; // arbitrary range expr
@@ -377,6 +378,18 @@ export async function collectDiff(
       head = 'HEAD';
       break;
     }
+    case 'all': {
+      // Everything since the fork point: committed work vs the base PLUS the
+      // working tree — `git diff <merge-base>` without ..HEAD diffs the
+      // worktree against it.
+      const baseRef =
+        target.base === 'auto' ? await detectDefaultBase(cwd) : target.base;
+      const mb = (await mergeBase(baseRef, 'HEAD', cwd)) ?? 'HEAD';
+      raw = await git([...diffArgs, mb], cwd);
+      base = baseRef;
+      head = 'worktree';
+      break;
+    }
     case 'commit': {
       raw = await git([...diffArgs, `${target.ref}^!`], cwd);
       base = `${target.ref}^`;
@@ -392,7 +405,10 @@ export async function collectDiff(
 
   const files = parseUnifiedDiff(raw);
 
-  if (target.kind === 'working' && options.includeUntracked !== false) {
+  if (
+    (target.kind === 'working' || target.kind === 'all') &&
+    options.includeUntracked !== false
+  ) {
     const status = await worktreeStatus(cwd);
     const root = cwd ?? '.';
     for (const path of status.untracked) {

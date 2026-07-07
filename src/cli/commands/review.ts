@@ -12,7 +12,7 @@ import {
   type FileDiff,
   type ReviewTarget,
 } from '@/git/diff';
-import { currentBranch, isGitRepo, repoRoot } from '@/git/repo';
+import { commitMeta, currentBranch, isGitRepo, repoRoot } from '@/git/repo';
 import { estimateCostUsd } from '@/inference/models';
 import { resolveClient } from '@/inference/resolve';
 import { loadLearningsForPrompt } from '@/memory/learnings';
@@ -30,7 +30,9 @@ import {
 } from '@/review/cache';
 import {
   gatherCustomAgents,
+  gatherFullFileContext,
   gatherGuidelines,
+  gatherHistoryContext,
   gatherPathInstructions,
 } from '@/review/context';
 import { type ReviewEvent, runReview } from '@/review/engine';
@@ -53,20 +55,24 @@ import {
   type Severity,
 } from '@/review/schema';
 import { serializeDiffSet } from '@/review/serialize';
+import { commandExists, exec } from '@/util/exec';
 import { log, setColorMode, setQuiet } from '@/util/logger';
 
 function resolveTarget(args: Record<string, unknown>): ReviewTarget {
   const commit = args.commit as string | undefined;
   const base = args.base as string | undefined;
   const baseCommit = args['base-commit'] as string | undefined;
-  const type = (args.type as string | undefined) ?? 'all';
+  const type = args.type as string | undefined;
 
   if (commit) return { kind: 'commit', ref: commit };
   if (baseCommit) return { kind: 'range', range: `${baseCommit}..HEAD` };
   if (base) return { kind: 'branch', base };
   if (type === 'staged') return { kind: 'staged' };
   if (type === 'committed') return { kind: 'branch', base: 'auto' };
-  // 'all' and 'uncommitted' both review the working tree vs HEAD.
+  // Explicit --type all: everything since the fork point — committed work vs
+  // the auto-detected base PLUS the working tree.
+  if (type === 'all') return { kind: 'all', base: 'auto' };
+  // Default (and 'uncommitted'): the working tree vs HEAD.
   return { kind: 'working' };
 }
 
@@ -186,6 +192,9 @@ export const findingsCommand = defineCommand({
     }
     emitOutput(format, cached.review, diff, undefined, {
       diagrams: config.output.markdownDiagrams,
+      effort: config.reviews.estimateEffort,
+      mergeConfidence: config.reviews.mergeConfidence,
+      aiPrompts: config.reviews.promptForAiAgents,
     });
   },
 });
@@ -200,7 +209,7 @@ export const reviewCommand = defineCommand({
       type: 'string',
       alias: 't',
       description:
-        'Scope: all/uncommitted (working tree vs HEAD, incl. staged) | committed (branch vs base) | staged (index only)',
+        'Scope: all (committed vs base + working tree) | committed (branch vs base) | uncommitted (working tree vs HEAD, the default) | staged (index only)',
     },
     base: {
       type: 'string',
@@ -293,6 +302,11 @@ export const reviewCommand = defineCommand({
     const { config, errors: configErrors } = await loadConfig(root);
     for (const e of configErrors) log.warn(`config: ${e}`);
     setColorMode(config.output.color);
+    if (config.raw.knowledge_base?.web_search?.enabled) {
+      log.warn(
+        'knowledge_base.web_search is not supported by ergo (no web-search backend); ignoring.',
+      );
+    }
 
     // Effective output format: --format wins, else the configured default.
     const formatInput =
@@ -465,11 +479,11 @@ export const reviewCommand = defineCommand({
       return;
     }
 
-    // An auto-detected base (`--type committed`) is only known after
-    // collection — apply reviews.ignore.base_branches to it here. Match both
-    // the resolved ref ('origin/main') and its short name ('main').
+    // An auto-detected base (`--type committed` / `--type all`) is only known
+    // after collection — apply reviews.ignore.base_branches to it here. Match
+    // both the resolved ref ('origin/main') and its short name ('main').
     if (
-      target.kind === 'branch' &&
+      (target.kind === 'branch' || target.kind === 'all') &&
       diff.base &&
       config.reviews.ignoreBaseBranches.length > 0 &&
       (matchesAny(diff.base, config.reviews.ignoreBaseBranches) ||
@@ -482,6 +496,65 @@ export const reviewCommand = defineCommand({
         `Skipping review: base '${diff.base}' matches reviews.ignore.base_branches.`,
       );
       return;
+    }
+
+    // reviews.ignore.pr_titles / ignore_usernames — local analog: the head
+    // commit's subject and author (commit-bearing targets only).
+    if (
+      (target.kind === 'commit' ||
+        target.kind === 'branch' ||
+        target.kind === 'all' ||
+        target.kind === 'range') &&
+      (config.reviews.ignorePrTitles.length > 0 ||
+        config.reviews.ignoreUsernames.length > 0)
+    ) {
+      const ref = target.kind === 'commit' ? target.ref : 'HEAD';
+      const meta = await commitMeta(ref, root);
+      if (meta) {
+        const titleHit = config.reviews.ignorePrTitles.find((p) =>
+          matchesTitlePattern(meta.subject, p),
+        );
+        if (titleHit) {
+          emitPolicySkip(
+            `Skipping review: commit subject matches reviews.ignore.pr_titles ('${titleHit}').`,
+          );
+          return;
+        }
+        if (
+          matchesAny(meta.authorName, config.reviews.ignoreUsernames) ||
+          matchesAny(meta.authorEmail, config.reviews.ignoreUsernames)
+        ) {
+          emitPolicySkip(
+            `Skipping review: author '${meta.authorName}' matches reviews.ignore.ignore_usernames.`,
+          );
+          return;
+        }
+      }
+    }
+
+    // reviews.ignore.pr_labels — when the branch has an open PR and the gh CLI
+    // is available, honor its labels. Best-effort: any failure means no skip.
+    if (
+      (target.kind === 'branch' || target.kind === 'all') &&
+      config.reviews.ignorePrLabels.length > 0 &&
+      (await commandExists('gh'))
+    ) {
+      const { stdout, exitCode } = await exec(
+        ['gh', 'pr', 'view', '--json', 'labels', '--jq', '.labels[].name'],
+        { cwd: root },
+      );
+      if (exitCode === 0) {
+        const labels = stdout.split('\n').filter(Boolean);
+        const hit = labels.find((l) =>
+          matchesAny(l, config.reviews.ignorePrLabels),
+        );
+        if (hit) {
+          emitPolicySkip(
+            `Skipping review: PR label '${hit}' matches reviews.ignore.pr_labels.`,
+          );
+          return;
+        }
+      }
     }
 
     // Normalize `./src/x.ts` → `src/x.ts` so --files matches git's paths.
@@ -602,6 +675,20 @@ export const reviewCommand = defineCommand({
     ]);
     const pathInstructions = gatherPathInstructions(finalDiff, config);
     const customAgents = gatherCustomAgents(finalDiff, config);
+    // reviews.whole_repo_context / history_context — extra prompt context.
+    // Full files are worktree reads, so only for working-tree-safe targets.
+    const worktreeSafe =
+      target.kind === 'working' ||
+      target.kind === 'staged' ||
+      target.kind === 'all' ||
+      target.kind === 'branch';
+    const fullFiles =
+      config.reviews.wholeRepoContext && worktreeSafe
+        ? await gatherFullFileContext(root, finalDiff.files)
+        : undefined;
+    const history = config.reviews.historyContext
+      ? await gatherHistoryContext(root, finalDiff.files)
+      : undefined;
     const customFocusParts = [
       args.prompt as string | undefined,
       instructionFiles,
@@ -624,6 +711,8 @@ export const reviewCommand = defineCommand({
       toneInstructions: config.toneInstructions,
       language: config.language,
       reasoningEffort,
+      wholeRepoContext: Boolean(fullFiles),
+      history,
     });
 
     // Incremental reuse: files whose rendered diff is byte-identical to the
@@ -715,7 +804,12 @@ export const reviewCommand = defineCommand({
         }
         emitter.complete(review.stats);
       } else {
-        emitOutput(format, review, finalDiff, undefined);
+        emitOutput(format, review, finalDiff, undefined, {
+          diagrams: config.output.markdownDiagrams,
+          effort: config.reviews.estimateEffort,
+          mergeConfidence: config.reviews.mergeConfidence,
+          aiPrompts: config.reviews.promptForAiAgents,
+        });
       }
       if (failOn) {
         const worst = review.findings.reduce(
@@ -762,11 +856,13 @@ export const reviewCommand = defineCommand({
     const staticSafeTarget =
       target.kind === 'working' ||
       target.kind === 'staged' ||
+      target.kind === 'all' ||
       target.kind === 'branch';
     const analysis = await runStaticAnalysis(reviewDiff, {
       repoRoot: root,
       toggles: config.reviews.tools,
       enabled: !args['no-static'] && staticSafeTarget,
+      typeVerify: config.reviews.typeVerify,
     });
     if (analysis.ran.length > 0) {
       log.dim(`static analysis: ${analysis.ran.join(', ')}`);
@@ -780,6 +876,8 @@ export const reviewCommand = defineCommand({
       pathInstructions,
       learnings,
       staticFindings: analysis.groundingText,
+      fullFiles,
+      history,
       language: config.language,
       toneInstructions: config.toneInstructions,
       sequenceDiagrams: config.reviews.sequenceDiagrams,
@@ -909,6 +1007,9 @@ export const reviewCommand = defineCommand({
     // Emit output.
     emitOutput(format, review, finalDiff, agentEmitter, {
       diagrams: config.output.markdownDiagrams,
+      effort: config.reviews.estimateEffort,
+      mergeConfidence: config.reviews.mergeConfidence,
+      aiPrompts: config.reviews.promptForAiAgents,
     });
 
     // Exit code policy (failOn validated above).
@@ -929,7 +1030,12 @@ function emitOutput(
   review: ReviewResult,
   diff: DiffSet,
   agentEmitter: AgentEmitter | undefined,
-  opts: { diagrams?: boolean } = {},
+  opts: {
+    diagrams?: boolean;
+    effort?: boolean;
+    mergeConfidence?: boolean;
+    aiPrompts?: boolean;
+  } = {},
 ): void {
   switch (format) {
     case 'agent':
@@ -943,14 +1049,40 @@ function emitOutput(
       break;
     case 'markdown':
       process.stdout.write(
-        `${renderMarkdown(review, diff, { diagrams: opts.diagrams })}\n`,
+        `${renderMarkdown(review, diff, {
+          diagrams: opts.diagrams,
+          effort: opts.effort,
+          mergeConfidence: opts.mergeConfidence,
+          aiPrompts: opts.aiPrompts,
+        })}\n`,
       );
       break;
     case 'plain':
-      process.stdout.write(`${renderTerminal(review, { plain: true })}\n`);
+      process.stdout.write(
+        `${renderTerminal(review, {
+          plain: true,
+          effort: opts.effort,
+          mergeConfidence: opts.mergeConfidence,
+        })}\n`,
+      );
       break;
     default:
-      process.stdout.write(`${renderTerminal(review)}\n`);
+      process.stdout.write(
+        `${renderTerminal(review, {
+          effort: opts.effort,
+          mergeConfidence: opts.mergeConfidence,
+        })}\n`,
+      );
+  }
+}
+
+// CodeRabbit's pr_titles entries are regexes; fall back to a case-insensitive
+// substring match when the pattern doesn't compile.
+function matchesTitlePattern(subject: string, pattern: string): boolean {
+  try {
+    return new RegExp(pattern, 'i').test(subject);
+  } catch {
+    return subject.toLowerCase().includes(pattern.toLowerCase());
   }
 }
 

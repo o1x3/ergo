@@ -4,6 +4,53 @@ All notable changes to ergo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and ergo adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-07-08
+
+Everything previously deferred as "compat-only" that has sound local
+semantics is now implemented. The only keys still accepted-but-inert are the
+ones that fundamentally need infrastructure ergo doesn't have: 
+`knowledge_base.web_search` (no web-search backend — now warned about when
+enabled), `learnings.approval_delay` (no auto-learning pipeline),
+`reviews.assess_linked_issues` (needs an issue tracker), and `early_access`
+(nothing gated).
+
+### Added
+- **`inheritance: false`** in a repo `.ergo.yaml` now ignores the global
+  config entirely.
+- **`reviews.type_verify: false`** disables type-checking static-analysis
+  tools (mypy).
+- **`reviews.whole_repo_context: true`** feeds the full current contents of
+  changed files to the model as extra context (working-tree targets,
+  budget-capped) — gives `workingFileContent` a purpose at last.
+- **`reviews.history_context: true`** adds recent commit subjects touching
+  the changed paths as context. Both new context inputs participate in the
+  incremental-reuse fingerprint.
+- **Review effort and merge confidence are finally shown** — the model always
+  estimated them, but no renderer displayed them. Pretty output gets a dim
+  `effort ●●●○○ 3/5 · merge confidence 4/5` line and markdown gets them in
+  the header, gated by `reviews.estimate_code_review_effort` /
+  `reviews.merge_confidence`.
+- **`reviews.enable_prompt_for_ai_agents: true`** adds a collapsible
+  per-finding "Prompt for AI agents" block (the codegen instructions) to
+  markdown reports.
+- **`reviews.ignore.pr_titles` / `ignore_usernames`** get local analogs: the
+  head commit's subject (regex, substring fallback) and author name/email,
+  for commit-bearing targets. **`pr_labels`** is honored when the branch has
+  an open PR and the `gh` CLI is available.
+- **`knowledge_base.learnings.senior_reviewers`** is now the default author
+  filter for `ergo learn mine` (overridden by `--reviewers`).
+- **`--type all` means all**: committed work vs the auto-detected base PLUS
+  the working tree (it was silently identical to `uncommitted`). Bare
+  `ergo review` still reviews the working tree, unchanged.
+- `knowledge_base.web_search.enabled: true` now warns that ergo has no
+  web-search backend instead of being silently ignored.
+
+### Fixed
+- `compareSemver` orders prerelease identifiers per the semver spec
+  (`rc.10` > `rc.2`; numeric ids rank below alphanumeric).
+- `ergo chat` / `describe` / `learn mine` print a clean error instead of a
+  stack when the credential can't be resolved into a client.
+
 ## [0.3.2] - 2026-07-07
 
 ### Changed

@@ -25,7 +25,9 @@ import {
 } from '@/review/cache';
 import {
   gatherCustomAgents,
+  gatherFullFileContext,
   gatherGuidelines,
+  gatherHistoryContext,
   gatherPathInstructions,
 } from '@/review/context';
 import { runReview } from '@/review/engine';
@@ -154,6 +156,14 @@ export function buildMcpServer(): McpServer {
         ]);
         const pathInstructions = gatherPathInstructions(filtered, config);
         const customAgents = gatherCustomAgents(filtered, config);
+        // targetFrom only produces working/staged/branch targets — all
+        // working-tree-safe for full-file context.
+        const fullFiles = config.reviews.wholeRepoContext
+          ? await gatherFullFileContext(root, files)
+          : undefined;
+        const history = config.reviews.historyContext
+          ? await gatherHistoryContext(root, files)
+          : undefined;
         const promptFingerprint = computePromptFingerprint({
           guidelines,
           learnings,
@@ -163,6 +173,8 @@ export function buildMcpServer(): McpServer {
           toneInstructions: config.toneInstructions,
           language: config.language,
           reasoningEffort: config.model.reasoningEffort,
+          wholeRepoContext: Boolean(fullFiles),
+          history,
         });
 
         // Incremental reuse — same semantics as the CLI: unchanged files
@@ -198,6 +210,7 @@ export function buildMcpServer(): McpServer {
           const analysis = await runStaticAnalysis(reviewDiff, {
             repoRoot: root,
             toggles: config.reviews.tools,
+            typeVerify: config.reviews.typeVerify,
           });
           review = await runReview({
             diff: reviewDiff,
@@ -211,6 +224,8 @@ export function buildMcpServer(): McpServer {
               pathInstructions,
               learnings,
               staticFindings: analysis.groundingText,
+              fullFiles,
+              history,
               language: config.language,
               toneInstructions: config.toneInstructions,
               sequenceDiagrams: config.reviews.sequenceDiagrams,

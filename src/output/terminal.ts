@@ -43,7 +43,12 @@ const margin = (line: string): string => `  ${line}`;
 // rendered walkthrough; color is handled by picocolors based on the stream).
 export function renderTerminal(
   review: ReviewResult,
-  options: { plain?: boolean } = {},
+  options: {
+    plain?: boolean;
+    // reviews.estimate_code_review_effort / merge_confidence display gates.
+    effort?: boolean;
+    mergeConfidence?: boolean;
+  } = {},
 ): string {
   const out: string[] = [];
   const { summary, findings, stats } = review;
@@ -61,6 +66,21 @@ export function renderTerminal(
       W - 2,
     ))
       out.push(margin(l));
+  }
+
+  // Model-estimated review effort and merge confidence (config-gated).
+  const assessParts: string[] = [];
+  if (options.effort !== false) {
+    assessParts.push(`effort ${meter(summary.effort)} ${summary.effort}/5`);
+  }
+  if (options.mergeConfidence !== false) {
+    assessParts.push(
+      `merge confidence ${meter(summary.mergeConfidence)} ${summary.mergeConfidence}/5`,
+    );
+  }
+  if (assessParts.length > 0) {
+    out.push('');
+    out.push(margin(pc.dim(assessParts.join(' · '))));
   }
 
   if (summary.fileSummaries.length > 0) {
@@ -223,6 +243,12 @@ function renderFinding(f: ReviewFinding, sevWordW: number): string[] {
     }
   }
   return lines;
+}
+
+// A 5-dot meter for 1-5 scores (●●●○○).
+function meter(n: number): string {
+  const filled = Math.max(0, Math.min(5, Math.round(n)));
+  return '●'.repeat(filled) + '○'.repeat(5 - filled);
 }
 
 function diffColor(line: string): string {

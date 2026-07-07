@@ -29,15 +29,27 @@ const SEVERITY_EMOJI: Record<Severity, string> = {
 export function renderMarkdown(
   review: ReviewResult,
   diff: DiffSet,
-  opts: { diagrams?: boolean } = {},
+  opts: {
+    diagrams?: boolean;
+    effort?: boolean;
+    mergeConfidence?: boolean;
+    // reviews.enable_prompt_for_ai_agents — per-finding codegen block.
+    aiPrompts?: boolean;
+  } = {},
 ): string {
   const { summary, findings, stats } = review;
   const md: string[] = [];
 
   md.push(`# ergo review`);
   md.push('');
+  const assess = [
+    opts.effort !== false ? `effort ${summary.effort}/5` : undefined,
+    opts.mergeConfidence !== false
+      ? `merge confidence ${summary.mergeConfidence}/5`
+      : undefined,
+  ].filter(Boolean);
   md.push(
-    `> ${describeTarget(diff)} · ${stats.filesReviewed} file(s) · +${stats.additions}/-${stats.deletions}`,
+    `> ${describeTarget(diff)} · ${stats.filesReviewed} file(s) · +${stats.additions}/-${stats.deletions}${assess.length ? ` · ${assess.join(' · ')}` : ''}`,
   );
   md.push('');
 
@@ -110,6 +122,19 @@ export function renderMarkdown(
         md.push(fc);
         md.push(patch);
         md.push(fc);
+      }
+      if (opts.aiPrompts && f.codegenInstructions?.trim()) {
+        md.push('');
+        md.push('<details>');
+        md.push('<summary>Prompt for AI agents</summary>');
+        md.push('');
+        const prompt = f.codegenInstructions.trim();
+        const pf = fence(prompt);
+        md.push(pf);
+        md.push(prompt);
+        md.push(pf);
+        md.push('');
+        md.push('</details>');
       }
       md.push('');
     }

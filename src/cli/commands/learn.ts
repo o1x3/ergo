@@ -110,15 +110,29 @@ const mineCommand = defineCommand({
       process.exitCode = 1;
       return;
     }
-    const resolved = resolveClient({
-      credential,
-      modelOverride: (args.model as string | undefined) ?? config.model.default,
-    });
+    let resolved: ReturnType<typeof resolveClient>;
+    try {
+      resolved = resolveClient({
+        credential,
+        modelOverride:
+          (args.model as string | undefined) ?? config.model.default,
+      });
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
 
-    const authors = (args.reviewers as string | undefined)
-      ?.split(',')
-      .map((s) => s.trim())
-      .filter(Boolean);
+    // knowledge_base.learnings.senior_reviewers is the configured default for
+    // whose review conventions to mirror; --reviewers overrides.
+    const authors =
+      (args.reviewers as string | undefined)
+        ?.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean) ??
+      (config.knowledgeBase.seniorReviewers.length > 0
+        ? config.knowledgeBase.seniorReviewers
+        : undefined);
     const limit = args.commits ? Number(args.commits) : 200;
     if (!Number.isInteger(limit) || limit <= 0) {
       log.error(`Invalid --commits '${args.commits}'. Use a positive integer.`);

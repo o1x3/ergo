@@ -60,6 +60,8 @@ export async function runStaticAnalysis(
     toggles?: Record<string, ToolToggle>;
     onSkip?: (name: string, reason: string) => void;
     enabled?: boolean;
+    // reviews.type_verify: false disables type-checking tools (mypy, …).
+    typeVerify?: boolean;
   },
 ): Promise<AnalysisResult> {
   const toggles = opts.toggles ?? {};
@@ -84,6 +86,9 @@ export async function runStaticAnalysis(
 
   const runTool = async (tool: ToolSpec): Promise<ToolOutcome> => {
     if (!isEnabled(tool, toggles)) return { kind: 'inapplicable' };
+    if (tool.category === 'type' && opts.typeVerify === false) {
+      return { kind: 'inapplicable' };
+    }
     const applicable = diff.files.filter(
       (f) => !f.binary && tool.applies({ path: f.path, language: f.language }),
     );

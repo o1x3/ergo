@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 import { instructionsForPath, matchesAny } from '@/config/filters';
 import type { ResolvedConfig } from '@/config/schema';
-import type { DiffSet } from '@/git/diff';
+import type { DiffSet, FileDiff } from '@/git/diff';
+import { workingFileContent } from '@/git/diff';
 import { exec } from '@/util/exec';
 
 const MAX_CONTEXT_FILE_BYTES = 32_000;
@@ -154,4 +155,59 @@ function matchSimple(path: string, pattern: string): boolean {
   } catch {
     return false;
   }
+}
+
+const MAX_FULL_FILE_BYTES = 24_000;
+const MAX_TOTAL_FULL_FILE_BYTES = 96_000;
+
+// reviews.whole_repo_context: the full current content of each changed file so
+// the model sees the surrounding code, not just hunks. Working-tree targets
+// only (the worktree is what's under review). Budget-capped.
+export async function gatherFullFileContext(
+  repoRoot: string,
+  files: FileDiff[],
+): Promise<string | undefined> {
+  const parts: string[] = [];
+  let total = 0;
+  for (const f of files) {
+    if (f.binary) continue;
+    const content = await workingFileContent(repoRoot, f.path);
+    if (!content?.trim()) continue;
+    const capped =
+      content.length > MAX_FULL_FILE_BYTES
+        ? `${content.slice(0, MAX_FULL_FILE_BYTES)}\n…[truncated]`
+        : content;
+    const block = `### ${f.path} (full file)\n${capped}`;
+    if (total + block.length > MAX_TOTAL_FULL_FILE_BYTES) break;
+    parts.push(block);
+    total += block.length;
+  }
+  return parts.length > 0 ? parts.join('\n\n') : undefined;
+}
+
+const HISTORY_COMMITS = 20;
+const MAX_HISTORY_CHARS = 4_000;
+
+// reviews.history_context: recent commit subjects touching the changed paths,
+// so the model knows how this area has been evolving.
+export async function gatherHistoryContext(
+  repoRoot: string,
+  files: FileDiff[],
+): Promise<string | undefined> {
+  if (files.length === 0) return undefined;
+  const { stdout, exitCode } = await exec(
+    [
+      'git',
+      'log',
+      `-n${HISTORY_COMMITS}`,
+      '--no-merges',
+      '--pretty=format:- %s (%an)',
+      '--',
+      ...files.map((f) => f.path),
+    ],
+    { cwd: repoRoot },
+  );
+  if (exitCode !== 0) return undefined;
+  const text = stdout.trim();
+  return text ? text.slice(0, MAX_HISTORY_CHARS) : undefined;
 }

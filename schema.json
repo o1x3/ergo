@@ -91,15 +91,15 @@
         },
         "type_verify": {
           "type": "boolean",
-          "description": "Accepted for .coderabbit.yaml/cubic compatibility; not currently used by ergo."
+          "description": "false disables type-checking static-analysis tools (e.g. mypy)."
         },
         "whole_repo_context": {
           "type": "boolean",
-          "description": "Accepted for .coderabbit.yaml/cubic compatibility; not currently used by ergo."
+          "description": "Include the full current contents of changed files as extra prompt context (working-tree targets; budget-capped). Default false."
         },
         "history_context": {
           "type": "boolean",
-          "description": "Accepted for .coderabbit.yaml/cubic compatibility; not currently used by ergo."
+          "description": "Include recent commit subjects touching the changed files as prompt context. Default false."
         },
         "incremental": {
           "type": "boolean"
@@ -121,15 +121,15 @@
         },
         "estimate_code_review_effort": {
           "type": "boolean",
-          "description": "Accepted for .coderabbit.yaml/cubic compatibility; not currently used by ergo."
+          "description": "Show the model-estimated review effort (1-5) in pretty/markdown output. Default true."
         },
         "merge_confidence": {
           "type": "boolean",
-          "description": "Accepted for .coderabbit.yaml/cubic compatibility; not currently used by ergo."
+          "description": "Show the model-estimated merge confidence (1-5) in pretty/markdown output. Default true."
         },
         "enable_prompt_for_ai_agents": {
           "type": "boolean",
-          "description": "Accepted for .coderabbit.yaml/cubic compatibility; not currently used by ergo."
+          "description": "Add a per-finding prompt-for-AI-agents block (codegen instructions) to markdown reports. Default false."
         },
         "assess_linked_issues": {
           "type": "boolean",

@@ -164,6 +164,12 @@ export interface ResolvedConfig {
     profile: 'chill' | 'assertive';
     minConfidence: number;
     incremental: boolean;
+    typeVerify: boolean;
+    wholeRepoContext: boolean;
+    historyContext: boolean;
+    estimateEffort: boolean;
+    mergeConfidence: boolean;
+    promptForAiAgents: boolean;
     fileLimit: number;
     ultraFileLimit: number;
     highLevelSummary: boolean;
@@ -174,6 +180,9 @@ export interface ResolvedConfig {
     ignoreFiles: string[];
     ignoreHeadBranches: string[];
     ignoreBaseBranches: string[];
+    ignorePrTitles: string[];
+    ignoreUsernames: string[];
+    ignorePrLabels: string[];
     maxChangedLines: number;
     honorLinguistGenerated: boolean;
     tools: Record<
@@ -193,6 +202,7 @@ export interface ResolvedConfig {
     contextFiles: { enabled: boolean; patterns: string[] };
     codeGuidelines: { enabled: boolean; filePatterns: string[] };
     learningsScope: 'local' | 'global' | 'auto';
+    seniorReviewers: string[];
   };
   output: {
     defaultFormat: 'pretty' | 'plain' | 'json' | 'agent' | 'sarif' | 'markdown';
@@ -257,6 +267,12 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
       profile,
       minConfidence,
       incremental: reviews.incremental ?? true,
+      typeVerify: reviews.type_verify ?? true,
+      wholeRepoContext: reviews.whole_repo_context ?? false,
+      historyContext: reviews.history_context ?? false,
+      estimateEffort: reviews.estimate_code_review_effort ?? true,
+      mergeConfidence: reviews.merge_confidence ?? true,
+      promptForAiAgents: reviews.enable_prompt_for_ai_agents ?? false,
       fileLimit: reviews.file_limit ?? 100,
       ultraFileLimit: reviews.ultra_file_limit ?? 250,
       highLevelSummary: reviews.high_level_summary ?? true,
@@ -267,6 +283,9 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
       ignoreFiles: reviews.ignore?.files ?? [],
       ignoreHeadBranches: reviews.ignore?.head_branches ?? [],
       ignoreBaseBranches: reviews.ignore?.base_branches ?? [],
+      ignorePrTitles: reviews.ignore?.pr_titles ?? [],
+      ignoreUsernames: reviews.ignore?.ignore_usernames ?? [],
+      ignorePrLabels: reviews.ignore?.pr_labels ?? [],
       maxChangedLines: reviews.ignore?.max_changed_lines ?? 0,
       honorLinguistGenerated: reviews.ignore?.honor_linguist_generated ?? true,
       tools: reviews.tools ?? {},
@@ -293,6 +312,7 @@ export function resolveConfig(config: ErgoConfig): ResolvedConfig {
         ],
       },
       learningsScope: kb.learnings?.scope ?? 'auto',
+      seniorReviewers: kb.learnings?.senior_reviewers ?? [],
     },
     output: {
       defaultFormat: config.output?.default_format ?? 'pretty',

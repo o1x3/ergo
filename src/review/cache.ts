@@ -150,6 +150,8 @@ function targetFromCache(cached: CachedReview): ReviewTarget {
   switch (target) {
     case 'staged':
       return { kind: 'staged' };
+    case 'all':
+      return { kind: 'all', base: base ?? 'auto' };
     case 'branch':
       return { kind: 'branch', base: base ?? 'auto' };
     case 'commit':

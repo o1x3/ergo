@@ -187,17 +187,23 @@ autocompletion. Highlights:
 version: 1
 language: en-US
 
+inheritance: true             # false = ignore the global config for this repo
+
 reviews:
   enabled: true               # false = per-repo opt-out (skips without a credential)
   profile: chill              # chill | assertive
   min_confidence: 0.6         # drop low-confidence findings (false-positive control)
   incremental: true           # reuse findings for files whose diff didn't change
+  whole_repo_context: false   # include full file contents as extra context
+  history_context: false      # include recent commit subjects as context
   sequence_diagrams: true
   path_filters:               # CodeRabbit-style include/exclude globs
     - "!**/*.lock"
     - "!dist/**"
   ignore:
     head_branches: ["wip/**"] # skip reviews on matching branches
+    pr_titles: ["^WIP"]       # skip when the head commit subject matches (regex)
+    ignore_usernames: []      # skip when the head commit author matches
     max_changed_lines: 0      # skip changesets bigger than this (0 = no cap)
   path_instructions:
     - path: "src/**/*.ts"

@@ -13,6 +13,10 @@ export type PromptContext = {
   pathInstructions?: string;
   learnings?: string;
   staticFindings?: string;
+  // reviews.whole_repo_context — full contents of the changed files.
+  fullFiles?: string;
+  // reviews.history_context — recent commit subjects touching these paths.
+  history?: string;
   language?: string; // ISO locale for output, e.g. en-US
   toneInstructions?: string;
   // reviews.sequence_diagrams — when false, the summary pass is told not to
@@ -93,6 +97,16 @@ function contextBlock(ctx: PromptContext): string {
       `## Learnings from past reviews (apply these)\n${ctx.learnings}`,
     );
   }
+  if (ctx.history) {
+    blocks.push(
+      `## Recent commit history for these files (context only)\n${ctx.history}`,
+    );
+  }
+  if (ctx.fullFiles) {
+    blocks.push(
+      `## Full current contents of the changed files (context — review the DIFF, use this to verify surrounding code)\n${ctx.fullFiles}`,
+    );
+  }
   if (ctx.staticFindings) {
     blocks.push(
       `## Static-analysis findings (verify, dedupe, prioritize — do not blindly repeat)\n${ctx.staticFindings}`,
@@ -147,6 +161,8 @@ export function describeTarget(diff: DiffSet): string {
   switch (diff.target.kind) {
     case 'working':
       return 'uncommitted working-tree changes vs HEAD';
+    case 'all':
+      return `all changes vs ${diff.base ?? 'base'} (committed + uncommitted)`;
     case 'staged':
       return 'staged changes vs HEAD';
     case 'branch':

@@ -98,23 +98,33 @@ export async function loadConfig(
     }
   };
 
-  // Global first (lowest precedence).
-  for (const candidate of globalConfigCandidates(env)) {
-    const found = await readYamlIfExists(candidate);
-    if (found) {
-      apply(found);
-      break;
+  // Read the repo config first (without applying) so its `inheritance` flag
+  // can decide whether the global config participates at all.
+  let repoFound: YamlReadResult | undefined;
+  for (const name of REPO_CONFIG_NAMES) {
+    repoFound = await readYamlIfExists(join(repoRoot, name));
+    if (repoFound) break;
+  }
+  const repoParsed =
+    repoFound && repoFound.error === undefined
+      ? ergoConfigSchema.safeParse(repoFound.data)
+      : undefined;
+  const inheritGlobal =
+    repoParsed?.success !== true || repoParsed.data.inheritance !== false;
+
+  // Global first (lowest precedence) — unless the repo opted out.
+  if (inheritGlobal) {
+    for (const candidate of globalConfigCandidates(env)) {
+      const found = await readYamlIfExists(candidate);
+      if (found) {
+        apply(found);
+        break;
+      }
     }
   }
 
   // Repo config (highest precedence).
-  for (const name of REPO_CONFIG_NAMES) {
-    const found = await readYamlIfExists(join(repoRoot, name));
-    if (found) {
-      apply(found);
-      break;
-    }
-  }
+  if (repoFound) apply(repoFound);
 
   return { config: resolveConfig(merged), sources, errors };
 }

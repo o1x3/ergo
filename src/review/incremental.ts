@@ -35,6 +35,11 @@ export function computePromptFingerprint(inputs: {
   toneInstructions?: string;
   language?: string;
   reasoningEffort?: string;
+  // whole_repo_context flag (full-file text itself derives from the diff, but
+  // toggling the option changes the prompt) and the history_context text
+  // (which can move even when the diff doesn't — e.g. unrelated commits).
+  wholeRepoContext?: boolean;
+  history?: string;
 }): string {
   return createHash('sha256')
     .update(
@@ -47,6 +52,8 @@ export function computePromptFingerprint(inputs: {
         inputs.toneInstructions ?? '',
         inputs.language ?? '',
         inputs.reasoningEffort ?? '',
+        inputs.wholeRepoContext ?? false,
+        inputs.history ?? '',
       ]),
     )
     .digest('hex');

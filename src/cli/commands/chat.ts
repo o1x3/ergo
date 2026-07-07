@@ -54,11 +54,19 @@ export const chatCommand = defineCommand({
       return;
     }
     const { config } = await loadConfig(root);
-    const resolved = resolveClient({
-      credential,
-      modelOverride: (args.model as string | undefined) ?? config.model.default,
-      sessionId: `ergo-chat-${Date.now()}`,
-    });
+    let resolved: ReturnType<typeof resolveClient>;
+    try {
+      resolved = resolveClient({
+        credential,
+        modelOverride:
+          (args.model as string | undefined) ?? config.model.default,
+        sessionId: `ergo-chat-${Date.now()}`,
+      });
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
 
     const serialized = serializeDiffSet(diff, { maxChars: 150_000 }).text;
     const system = [

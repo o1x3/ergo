@@ -45,7 +45,32 @@ export function compareSemver(a: string, b: string): number {
   }
   if (pa.pre && !pb.pre) return -1; // a is prerelease, b is release → a<b
   if (!pa.pre && pb.pre) return 1;
-  if (pa.pre && pb.pre) return pa.pre.localeCompare(pb.pre);
+  if (pa.pre && pb.pre) return comparePrerelease(pa.pre, pb.pre);
+  return 0;
+}
+
+// Semver prerelease precedence: dot-separated identifiers, numeric ids compare
+// numerically (rc.10 > rc.2), numeric < alphanumeric, shorter set < longer.
+function comparePrerelease(a: string, b: string): number {
+  const as = a.split('.');
+  const bs = b.split('.');
+  for (let i = 0; i < Math.max(as.length, bs.length); i++) {
+    const x = as[i];
+    const y = bs[i];
+    if (x === undefined) return -1;
+    if (y === undefined) return 1;
+    const xn = /^\d+$/.test(x);
+    const yn = /^\d+$/.test(y);
+    if (xn && yn) {
+      const d = Number(x) - Number(y);
+      if (d !== 0) return d > 0 ? 1 : -1;
+    } else if (xn !== yn) {
+      return xn ? -1 : 1; // numeric ids have lower precedence
+    } else {
+      const d = x.localeCompare(y);
+      if (d !== 0) return d;
+    }
+  }
   return 0;
 }
 

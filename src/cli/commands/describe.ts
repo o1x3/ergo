@@ -69,10 +69,18 @@ export const describeCommand = defineCommand({
       return;
     }
     const { config } = await loadConfig(root);
-    const resolved = resolveClient({
-      credential,
-      modelOverride: (args.model as string | undefined) ?? config.model.default,
-    });
+    let resolved: ReturnType<typeof resolveClient>;
+    try {
+      resolved = resolveClient({
+        credential,
+        modelOverride:
+          (args.model as string | undefined) ?? config.model.default,
+      });
+    } catch (err) {
+      log.error(err instanceof Error ? err.message : String(err));
+      process.exitCode = 1;
+      return;
+    }
 
     log.step('Generating description…');
     const text = serializeDiffSet(diff, { maxChars: 120_000 }).text;
