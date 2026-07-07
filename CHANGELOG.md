@@ -4,6 +4,17 @@ All notable changes to ergo are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and ergo adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.2] - 2026-07-07
+
+### Changed
+- **MCP `ergo_review` reaches full parity with the CLI review**: it now runs
+  static-analysis grounding on the changed files and uses incremental reuse —
+  repeated calls on an unchanged tree replay from cache with zero API spend,
+  and its cache entries are interchangeable with the CLI's (same prompt
+  fingerprint), so an `ergo review` after an MCP review reuses findings and
+  vice versa. The incremental decision now lives in one shared, tested helper
+  (`planIncremental`).
+
 ## [0.3.1] - 2026-07-07
 
 First release verified against the live Codex backend end-to-end (review,

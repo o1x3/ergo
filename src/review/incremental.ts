@@ -144,3 +144,57 @@ export function countBySeverity(
   for (const f of findings) counts[f.severity] += 1;
   return counts;
 }
+
+export type IncrementalPlan = {
+  // Files that still need a fresh model pass.
+  freshFiles: FileDiff[];
+  // Findings carried forward from the cache (ids stripped).
+  carried: Finding[];
+  // How many files were reused.
+  reusedCount: number;
+  // Whether the cached summary may be replayed (identical file set).
+  summaryReusable: boolean;
+  summary?: CachedReview['review']['summary'];
+};
+
+// One-call incremental decision, shared by the CLI review command and the MCP
+// server: given the cache and the current changeset, decide what to re-review
+// and what to carry forward. Returns a no-reuse plan when the cache is not
+// compatible with the current run.
+export function planIncremental(
+  cached: CachedReview | undefined,
+  files: FileDiff[],
+  ctx: ReuseContext,
+): IncrementalPlan {
+  if (!canReuseCache(cached, ctx)) {
+    return {
+      freshFiles: files,
+      carried: [],
+      reusedCount: 0,
+      summaryReusable: false,
+    };
+  }
+  const { fresh, unchanged } = partitionForIncremental(
+    files,
+    cached.context.diffHashes ?? {},
+  );
+  if (unchanged.length === 0) {
+    return {
+      freshFiles: files,
+      carried: [],
+      reusedCount: 0,
+      summaryReusable: false,
+    };
+  }
+  return {
+    freshFiles: fresh,
+    carried: carriedFindings(
+      cached,
+      new Set(unchanged.map((f) => f.path)),
+      ctx.minConfidence,
+    ),
+    reusedCount: unchanged.length,
+    summaryReusable: samePathSet(cached, files),
+    summary: cached.review.summary,
+  };
+}

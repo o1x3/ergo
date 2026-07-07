@@ -18,6 +18,7 @@ import {
   countBySeverity,
   mergeFindings,
   partitionForIncremental,
+  planIncremental,
   samePathSet,
 } from '@/review/incremental';
 import type { Finding, ReviewFinding } from '@/review/schema';
@@ -570,5 +571,59 @@ describe('guidelines: untracked context files are included', () => {
     const { config } = parseConfigString('');
     const out = await gatherGuidelines(await canonicalRoot(root), config!);
     expect(out).toContain('wip rule');
+  });
+});
+
+describe('incremental: planIncremental (shared by CLI + MCP)', () => {
+  const DIFF = `diff --git a/a.ts b/a.ts
+--- a/a.ts
++++ b/a.ts
+@@ -1,1 +1,1 @@
+-const a = 1;
++const a = 2;
+`;
+  const ctx = {
+    model: 'gpt-5.4',
+    profile: 'chill' as const,
+    minConfidence: 0.6,
+    promptFingerprint: DEFAULT_FINGERPRINT,
+  };
+
+  test('incompatible cache yields a full-review plan', () => {
+    const files = parseUnifiedDiff(DIFF);
+    const plan = planIncremental(undefined, files, ctx);
+    expect(plan.reusedCount).toBe(0);
+    expect(plan.freshFiles).toEqual(files);
+    expect(plan.summaryReusable).toBe(false);
+  });
+
+  test('matching cache carries findings and marks summary reusable', () => {
+    const files = parseUnifiedDiff(DIFF);
+    const cache = mkCache({
+      diffHashes: computeDiffHashes(files),
+      findings: [
+        { ...mkFinding({ file: 'a.ts', confidence: 0.9 }), id: 'ERG-1' },
+      ],
+    });
+    const plan = planIncremental(cache, files, ctx);
+    expect(plan.reusedCount).toBe(1);
+    expect(plan.freshFiles).toEqual([]);
+    expect(plan.carried.length).toBe(1);
+    expect(plan.summaryReusable).toBe(true);
+    expect(plan.summary?.summary).toBe('s');
+  });
+
+  test('shrunken file set carries findings but not the summary', () => {
+    const files = parseUnifiedDiff(DIFF);
+    const cache = mkCache({
+      diffHashes: { ...computeDiffHashes(files), 'b.ts': 'gone' },
+      files: [{ path: 'a.ts' }, { path: 'b.ts' }],
+      findings: [
+        { ...mkFinding({ file: 'a.ts', confidence: 0.9 }), id: 'ERG-1' },
+      ],
+    });
+    const plan = planIncremental(cache, files, ctx);
+    expect(plan.reusedCount).toBe(1);
+    expect(plan.summaryReusable).toBe(false);
   });
 });

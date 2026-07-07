@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { defineCommand } from 'citty';
 import { z } from 'zod';
 
+import { runStaticAnalysis } from '@/analysis/runner';
 import { getActiveCredential } from '@/auth/resolve';
 import { makePathFilter } from '@/config/filters';
 import { loadConfig } from '@/config/load';
@@ -28,7 +29,13 @@ import {
   gatherPathInstructions,
 } from '@/review/context';
 import { runReview } from '@/review/engine';
-import { computePromptFingerprint } from '@/review/incremental';
+import {
+  computePromptFingerprint,
+  countBySeverity,
+  mergeFindings,
+  planIncremental,
+} from '@/review/incremental';
+import type { ReviewFinding, ReviewResult } from '@/review/schema';
 import { VERSION } from '@/version';
 
 function targetFrom(type?: string, base?: string): ReviewTarget {
@@ -36,6 +43,39 @@ function targetFrom(type?: string, base?: string): ReviewTarget {
   if (type === 'staged') return { kind: 'staged' };
   if (type === 'committed') return { kind: 'branch', base: 'auto' };
   return { kind: 'working' };
+}
+
+function emptyMcpSummary() {
+  return {
+    summary: 'No changes since the last review; findings reused from cache.',
+    walkthrough: '',
+    fileSummaries: [],
+    effort: 1,
+    mergeConfidence: 5,
+    sequenceDiagram: undefined,
+  };
+}
+
+function emptyMcpStats(
+  resolved: ReturnType<typeof resolveClient>,
+  diff: DiffSet,
+  findings: ReviewFinding[],
+) {
+  return {
+    filesReviewed: diff.files.filter((f) => !f.binary && f.hunks.length > 0)
+      .length,
+    filesSkipped: 0,
+    additions: diff.totalAdditions,
+    deletions: diff.totalDeletions,
+    findingsBySeverity: countBySeverity(findings),
+    tokensInput: 0,
+    tokensOutput: 0,
+    costUsd: 0,
+    subscriptionCovered: resolved.subscription,
+    model: resolved.model,
+    provider: resolved.provider,
+    durationMs: 0,
+  };
 }
 
 function ok(data: unknown) {
@@ -114,38 +154,85 @@ export function buildMcpServer(): McpServer {
         ]);
         const pathInstructions = gatherPathInstructions(filtered, config);
         const customAgents = gatherCustomAgents(filtered, config);
-        const review = await runReview({
-          diff: filtered,
-          resolved,
-          promptContext: {
-            profile: config.reviews.profile,
-            minConfidence: config.reviews.minConfidence,
-            customFocus: customAgents,
-            guidelines,
-            pathInstructions,
-            learnings,
-            language: config.language,
-            toneInstructions: config.toneInstructions,
-            sequenceDiagrams: config.reviews.sequenceDiagrams,
-          },
-          temperature: config.model.temperature,
+        const promptFingerprint = computePromptFingerprint({
+          guidelines,
+          learnings,
+          pathInstructions,
+          customAgents,
+          customFocus: customAgents,
+          toneInstructions: config.toneInstructions,
+          language: config.language,
           reasoningEffort: config.model.reasoningEffort,
         });
+
+        // Incremental reuse — same semantics as the CLI: unchanged files
+        // (identical rendered diff + prompt context) carry findings forward.
+        const plan = config.reviews.incremental
+          ? planIncremental(await loadReviewCache(root), files, {
+              model: resolved.model,
+              profile: config.reviews.profile,
+              minConfidence: config.reviews.minConfidence,
+              promptFingerprint,
+            })
+          : {
+              freshFiles: files,
+              carried: [],
+              reusedCount: 0,
+              summaryReusable: false,
+              summary: undefined,
+            };
+        const reviewDiff: DiffSet = { ...filtered, files: plan.freshFiles };
+
+        let review: ReviewResult;
+        if (plan.freshFiles.length === 0 && plan.summaryReusable) {
+          // Everything unchanged: zero-spend replay.
+          const findings = mergeFindings([], plan.carried);
+          review = {
+            summary: plan.summary ?? emptyMcpSummary(),
+            findings,
+            stats: emptyMcpStats(resolved, filtered, findings),
+          };
+        } else {
+          // Static-analysis grounding on the fresh subset (targetFrom only
+          // produces working/staged/branch targets — all working-tree-safe).
+          const analysis = await runStaticAnalysis(reviewDiff, {
+            repoRoot: root,
+            toggles: config.reviews.tools,
+          });
+          review = await runReview({
+            diff: reviewDiff,
+            summaryDiff: plan.reusedCount > 0 ? filtered : undefined,
+            resolved,
+            promptContext: {
+              profile: config.reviews.profile,
+              minConfidence: config.reviews.minConfidence,
+              customFocus: customAgents,
+              guidelines,
+              pathInstructions,
+              learnings,
+              staticFindings: analysis.groundingText,
+              language: config.language,
+              toneInstructions: config.toneInstructions,
+              sequenceDiagrams: config.reviews.sequenceDiagrams,
+            },
+            temperature: config.model.temperature,
+            reasoningEffort: config.model.reasoningEffort,
+          });
+          if (plan.reusedCount > 0) {
+            review.findings = mergeFindings(review.findings, plan.carried);
+            review.stats.findingsBySeverity = countBySeverity(review.findings);
+            review.stats.filesReviewed += plan.reusedCount;
+            review.stats.additions = filtered.totalAdditions;
+            review.stats.deletions = filtered.totalDeletions;
+          }
+        }
+
         // Persist so ergo_findings / `ergo fix` see this review, and count it
         // in `ergo stats` — same behavior as the CLI path.
         await saveReviewCache(root, filtered, review, {
           profile: config.reviews.profile,
           minConfidence: config.reviews.minConfidence,
-          promptFingerprint: computePromptFingerprint({
-            guidelines,
-            learnings,
-            pathInstructions,
-            customAgents,
-            customFocus: customAgents,
-            toneInstructions: config.toneInstructions,
-            language: config.language,
-            reasoningEffort: config.model.reasoningEffort,
-          }),
+          promptFingerprint,
         }).catch(() => {});
         await recordUsage(root, review.stats).catch(() => {});
         return ok({
