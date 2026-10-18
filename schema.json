@@ -287,7 +287,7 @@
         },
         "web_search": {
           "type": "object",
-          "description": "Accepted for .coderabbit.yaml compatibility; ergo has no web-search feature.",
+          "description": "Controls explicit /search and /fetch commands in ergo chat. Set enabled: false to disable web access. Reviews never search automatically.",
           "properties": {
             "enabled": {
               "type": "boolean"
