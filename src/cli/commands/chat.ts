@@ -4,6 +4,7 @@ import { createInterface } from 'node:readline';
 import { defineCommand } from 'citty';
 
 import { getActiveCredential } from '@/auth/resolve';
+import { completeChatTurn } from '@/chat/turn';
 import { loadConfig } from '@/config/load';
 import { collectDiff, type ReviewTarget } from '@/git/diff';
 import { isGitRepo, repoRoot } from '@/git/repo';
@@ -77,10 +78,14 @@ export const chatCommand = defineCommand({
     ].join('\n\n');
 
     const history: ChatMessage[] = [];
+    const web = { sessionId: crypto.randomUUID() };
 
     log.info(pc.bold(`ergo chat — ${describeTarget(diff)}`));
     log.dim(
       `${diff.files.length} file(s), +${diff.totalAdditions}/-${diff.totalDeletions}. Type a question, or /exit, /clear, /files.`,
+    );
+    log.dim(
+      '/search <query> or /fetch <URL> sends only that query or URL to Parallel Search MCP.',
     );
     log.info('');
 
@@ -138,35 +143,30 @@ export const chatCommand = defineCommand({
           continue;
         }
 
-        history.push({ role: 'user', content: input });
         process.stdout.write('\n');
-        let answer = '';
         const controller = new AbortController();
         currentAbort = controller;
         try {
-          const result = await resolved.client.complete({
-            model: resolved.model,
+          await completeChatTurn({
+            input,
             system,
-            messages: history,
-            temperature: 0.3,
+            history,
+            resolved,
+            config,
+            web,
             signal: controller.signal,
             onTextDelta: (d) => {
-              answer += d;
               process.stdout.write(d);
             },
           });
-          if (!answer) process.stdout.write(result.text);
-          answer = answer || result.text;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           if (controller.signal.aborted) log.dim('\n(cancelled)');
           else log.error(msg);
-          history.pop();
           continue;
         } finally {
           currentAbort = null;
         }
-        history.push({ role: 'assistant', content: answer });
         // Trim oldest turns so a long session doesn't grow unbounded. Keep the
         // window starting on a user turn — Anthropic rejects a leading
         // assistant message.

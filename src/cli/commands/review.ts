@@ -304,7 +304,7 @@ export const reviewCommand = defineCommand({
     setColorMode(config.output.color);
     if (config.raw.knowledge_base?.web_search?.enabled) {
       log.warn(
-        'knowledge_base.web_search is not supported by ergo (no web-search backend); ignoring.',
+        'knowledge_base.web_search applies to /search and /fetch in ergo chat; reviews do not perform web searches.',
       );
     }
 

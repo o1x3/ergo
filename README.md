@@ -30,8 +30,9 @@ ChatGPT.
   subscription** over OAuth — reviews run on your plan with **zero incremental API
   billing**. Or use an **OpenAI / Anthropic / OpenAI-compatible** (Ollama,
   OpenRouter, vLLM) API key.
-- 🏠 **Local-first.** Reviews run against your local git state. Your code never
-  leaves the machine except as the model API calls you already make.
+- 🏠 **Local-first.** Reviews run against your local git state. Reviews and ordinary
+  chat send code only to your configured model. Explicit chat web commands send
+  your query or URL to Parallel, as described below.
 - 💸 **No caps, no seats.** No per-seat fee, no lines-per-month cap, no per-file
   metering. The only limit is your own model quota.
 - 🧪 **Grounded in real tools.** Runs your installed linters/SAST (ruff, eslint,
@@ -114,6 +115,35 @@ ergo review --base origin/main --format json --fail-on major
 | `ergo update` | Self-update to the latest release |
 | `ergo install-hook [--uninstall]` | Install a pre-push/pre-commit review gate |
 | `ergo mcp` | Run as an MCP server (review tools for Claude Code / Cursor) |
+
+### Chat with public documentation
+
+In `ergo chat`, use `/search <query>` to look up current library documentation or
+`/fetch <http(s) URL>` to read a specific page. Results become context for the
+reply and later turns; ergo asks your selected model to cite source URLs.
+
+```text
+› /search Bun TypeScript module resolution
+› /fetch https://bun.sh/docs/runtime/typescript
+```
+
+These explicit commands use [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp)
+as the default web backend, with free anonymous search in Fast mode and page
+fetching. No Parallel account or API key is needed; free usage has rate limits.
+Your existing inference provider and model stay selected.
+
+Only the query you type or URL you supply, a conversation identifier, and the
+selected model name are sent to `https://search.parallel.ai/mcp`. Ergo does not
+derive queries from your code or send the diff or chat history to Parallel.
+Use public queries and URLs; avoid secrets. Retrieved content is sent to your
+selected model as chat context. Ordinary chat and reviews never initiate web
+requests, even with `knowledge_base.web_search.enabled: true`.
+
+Set `knowledge_base.web_search.enabled: false` or `knowledge_base.opt_out: true`
+in your repo or global config to disable both commands. Requests time out after
+30 seconds; Ctrl+C cancels an in-flight web request or reply. A failed request
+leaves chat history unchanged and does not switch providers. `/clear` clears
+the conversation context as usual.
 
 ### `ergo review` options
 
